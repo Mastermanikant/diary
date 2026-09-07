@@ -1,0 +1,18 @@
+# FrankDiary (od.frankbase.com / ood.frankbase.com / diary.frankbase.com)
+> A privacy-first, offline-first, client-side end-to-end encrypted personal diary and zero-knowledge data storage vault.
+
+## Mission & Principles
+- Your data belongs to you. The server stores ciphertext, not readable personal information.
+- Offline-first: Operates 100% without internet connectivity, mandatory accounts, or tracking.
+- Client-side cryptography: All encryption and decryption happen strictly on the user's device using Argon2id (RFC 9106) and AES-256-GCM / XChaCha20-Poly1305.
+- Zero backdoors: Master keys are never transmitted to or stored on any server.
+
+## Product Modes
+- Mode 1: Fully Offline Diary (Local SQLite WASM / OPFS storage, in-memory client search).
+- Mode 2: Portable Encrypted Backups (.fbe container format, unencrypted Markdown / JSON exports).
+- Mode 3: Optional Zero-Knowledge Cloud Sync (Cloudflare Workers, D1 database, and R2 object storage).
+
+## Ecosystem & Founder
+- Founder: Master Manikant Yadav
+- Ecosystem: FrankBase Ecosystem (mastermanikant.com, frankbase.com, store.frankbase.com, frankpass.com)
+- Official Contact: connect@mastermanikant.com / support@frankbase.com / legal@frankbase.com
