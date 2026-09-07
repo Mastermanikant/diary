@@ -30,17 +30,22 @@
     "Device-Name Signature Provenance Tracking (Manikant Phone, Office PC)",
     "On-Device Full-Text Search and Mood/Tag/Favorite Filtering",
     "Authenticated Encrypted Backup (.fbe Container) Export and Restore",
-    "Unencrypted Plaintext JSON Anti-Lockin Export",
+    "Dual-Mode Download (.fbe encrypted container + unencrypted .json & .md markdown)",
+    "Read-Only Protected Freeze Mode (Palm touch / accidental backspace erasure protection)",
+    "Sensitive Page Shield (Anti-shoulder-surfing list view blur filter with tap-to-reveal)",
+    "Plausible Deniability Multi-Password Decoy / Family Vault (Zero-Leak single input lock)",
     "Full Day/Night Theme adhering to WCAG 2.1 AA and Rule 11",
-    "Cloudflare Pages Security Headers (_headers)"
+    "Cloudflare Pages Security Headers (_headers)",
+    "Master Comparative Research Matrix (06_current_apps_vs_frankdiary_pros_cons_painpoints_matrix.md)",
+    "Complete A-to-Z Chat Conversation History Export (COMPLETE_CHAT_CONVERSATION_HISTORY_A_TO_Z.md)"
   ],
   "build_status": {
     "engine": "React 18 + Vite 5 + Cloudflare Pages Functions",
-    "bundle_size": "249 kB JS (71 kB gzip), 5.2 kB CSS",
-    "build_time": "4.77s",
+    "bundle_size": "261 kB JS (74 kB gzip), 5.2 kB CSS",
+    "build_time": "3.28s",
     "test_errors": 0,
     "deployment": "SUCCESS - Cloudflare Edge Active (https://frankdiary.pages.dev)"
   },
-  "research_deliverables_count": 26,
+  "research_deliverables_count": 27,
   "research_directory": "research/"
 }
