@@ -32,6 +32,7 @@ export default function App() {
   const [masterKey, setMasterKey] = useState(null);
   const [currentPassphrase, setCurrentPassphrase] = useState('');
   const [vaultConfig, setVaultConfig] = useState(null);
+  const [isDecoyMode, setIsDecoyMode] = useState(false);
 
   // Decrypted Entries Cache in RAM
   const [entries, setEntries] = useState([]);
@@ -111,7 +112,7 @@ export default function App() {
       if (res.success) {
         setVaultConfig(res.updatedConfig);
         if (res.pulledCount > 0) {
-          await loadAndDecryptEntries(key, res.updatedConfig);
+          await loadAndDecryptEntries(key, res.updatedConfig, isDecoyMode);
         }
       }
     } catch (err) {
@@ -120,25 +121,26 @@ export default function App() {
   }
 
   // ==========================================
-  // UNLOCK SUCCESS HANDLER
+  // UNLOCK SUCCESS HANDLER (PRIMARY OR DECOY)
   // ==========================================
-  async function handleUnlockSuccess({ masterKey: key, config, passphrase }) {
+  async function handleUnlockSuccess({ masterKey: key, config, passphrase, isDecoyMode: decoy = false }) {
     setMasterKey(key);
     setVaultConfig(config);
     setCurrentPassphrase(passphrase);
+    setIsDecoyMode(decoy);
     setIsUnlocked(true);
 
-    // Load and decrypt all entries into memory
-    await loadAndDecryptEntries(key, config);
+    // Load and decrypt entries for the active session
+    await loadAndDecryptEntries(key, config, decoy);
 
-    // Initial background delta sync if enabled
-    if (config?.cloud_sync_enabled && navigator.onLine) {
+    // Initial background delta sync if enabled and in primary mode
+    if (!decoy && config?.cloud_sync_enabled && navigator.onLine) {
       triggerSilentSync(config, key);
     }
   }
 
   // Load and decrypt entries from IndexedDB
-  async function loadAndDecryptEntries(key, config) {
+  async function loadAndDecryptEntries(key, config, decoyMode = false) {
     try {
       setLoadingEntries(true);
       const rawRecords = await getAllEncryptedEntries();
@@ -162,20 +164,15 @@ export default function App() {
             tags: payload.tags || [],
             is_favorite: payload.is_favorite || false,
             physical_mode: payload.physical_mode ?? true,
-            struck_items: payload.struck_items || []
+            struck_items: payload.struck_items || [],
+            is_sensitive: payload.is_sensitive ?? (rec.is_sensitive === 1) ?? false,
+            is_decoy: payload.is_decoy ?? (rec.is_decoy === 1) ?? false
           });
         } catch {
-          decryptedList.push({
-            id: rec.id,
-            date: rec.date,
-            time: rec.time,
-            vault_category: rec.vault_category || 'personal',
-            font_style: 'standard',
-            title: rec.preview_title || 'अमान्य / करप्टेड पन्ना',
-            content: '⚠️ यह प्रविष्टि डिक्रिप्ट नहीं हो सकी (संभवतः छेड़छाड़ या करप्शन)।',
-            mood: rec.preview_mood || 'sad',
-            is_corrupted: true
-          });
+          // Plausible Deniability Invariant:
+          // If an entry cannot be decrypted with the active key (e.g. secret entries when unlocked via Family PIN),
+          // SILENTLY SKIP IT! Zero clues, zero corrupt cards, zero traces of other vaults.
+          continue;
         }
       }
 
@@ -190,6 +187,7 @@ export default function App() {
   // Instant Lock Vault (Zeroize Memory)
   function handleLockVault() {
     setIsUnlocked(false);
+    setIsDecoyMode(false);
     setMasterKey(null);
     setCurrentPassphrase('');
     setEntries([]);
@@ -231,6 +229,8 @@ export default function App() {
         vault_category: entry.vault_category || 'personal',
         font_style: entry.font_style || 'cursive',
         is_favorite: updatedFavorite,
+        is_sensitive: entry.is_sensitive,
+        is_decoy: entry.is_decoy,
         physical_mode: entry.physical_mode,
         struck_items: entry.struck_items,
         device_name: entry.device_name,
@@ -250,7 +250,9 @@ export default function App() {
         encrypted_data: encryptedBlob,
         preview_title: entry.title,
         preview_mood: entry.mood,
-        preview_is_favorite: updatedFavorite
+        preview_is_favorite: updatedFavorite,
+        is_sensitive: entry.is_sensitive ? 1 : 0,
+        is_decoy: entry.is_decoy ? 1 : 0
       });
 
       if (vaultConfig?.cloud_sync_enabled && navigator.onLine) {
@@ -276,6 +278,8 @@ export default function App() {
           vault_category: item.vault_category || 'personal',
           font_style: item.font_style || 'cursive',
           is_favorite: item.is_favorite || false,
+          is_sensitive: item.is_sensitive ?? false,
+          is_decoy: item.is_decoy ?? false,
           physical_mode: item.physical_mode ?? true,
           struck_items: item.struck_items || [],
           device_name: item.device_name || vaultConfig?.device_name || 'Imported Device',
@@ -296,11 +300,13 @@ export default function App() {
           encrypted_data: encryptedBlob,
           preview_title: item.title,
           preview_mood: item.mood,
-          preview_is_favorite: item.is_favorite
+          preview_is_favorite: item.is_favorite,
+          is_sensitive: item.is_sensitive ? 1 : 0,
+          is_decoy: item.is_decoy ? 1 : 0
         });
       }
 
-      await loadAndDecryptEntries(masterKey, vaultConfig);
+      await loadAndDecryptEntries(masterKey, vaultConfig, isDecoyMode);
       alert('सभी प्रविष्टियां सफलतापूर्वक आयात (Import) और एन्क्रिप्ट कर ली गईं!');
 
       if (vaultConfig?.cloud_sync_enabled && navigator.onLine) {
@@ -450,8 +456,9 @@ export default function App() {
             entryToEdit={entryToEdit}
             masterKey={masterKey}
             vaultConfig={vaultConfig}
+            isDecoyMode={isDecoyMode}
             onSaveComplete={async () => {
-              await loadAndDecryptEntries(masterKey, vaultConfig);
+              await loadAndDecryptEntries(masterKey, vaultConfig, isDecoyMode);
               setCurrentView('list');
               setEntryToEdit(null);
             }}
@@ -470,7 +477,7 @@ export default function App() {
         vaultConfig={vaultConfig}
         onConfigUpdated={(cfg) => setVaultConfig(cfg)}
         onSyncFinished={async () => {
-          await loadAndDecryptEntries(masterKey, vaultConfig);
+          await loadAndDecryptEntries(masterKey, vaultConfig, isDecoyMode);
         }}
       />
 
@@ -493,6 +500,7 @@ export default function App() {
         currentTheme={theme}
         onToggleTheme={toggleTheme}
         currentPassphrase={currentPassphrase}
+        isDecoyMode={isDecoyMode}
         onPassphraseChanged={(newPass, newKey) => {
           setCurrentPassphrase(newPass);
           setMasterKey(newKey);

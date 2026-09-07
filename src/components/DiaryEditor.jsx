@@ -16,7 +16,9 @@ import {
   EyeOff, 
   Sparkles,
   Type,
-  FolderLock
+  FolderLock,
+  Unlock,
+  ShieldAlert
 } from 'lucide-react';
 import { encryptPayload } from '../crypto/vaultCrypto';
 import { saveEncryptedEntry } from '../storage/localVault';
@@ -44,7 +46,8 @@ export default function DiaryEditor({
   masterKey, 
   vaultConfig, 
   onSaveComplete, 
-  onBack 
+  onBack,
+  isDecoyMode = false 
 }) {
   const [date, setDate] = useState(() => {
     return entryToEdit?.date || new Date().toISOString().split('T')[0];
@@ -62,6 +65,12 @@ export default function DiaryEditor({
   
   // Vault Selection (Edition)
   const [vaultCategory, setVaultCategory] = useState(entryToEdit?.vault_category || 'personal');
+
+  // Read-Only Protected Freeze Mode (Accidental Erasure Protection)
+  const [isReadOnly, setIsReadOnly] = useState(() => !!entryToEdit);
+
+  // Sensitive Page Shield (Intra-Diary Extra Privacy)
+  const [isSensitive, setIsSensitive] = useState(() => entryToEdit?.is_sensitive || false);
 
   // Cursive / Handwriting Typography Mode
   const [fontStyle, setFontStyle] = useState(entryToEdit?.font_style || 'cursive'); // 'cursive' | 'standard'
@@ -154,6 +163,8 @@ export default function DiaryEditor({
         vault_category: vaultCategory,
         font_style: fontStyle,
         is_favorite: isFavorite,
+        is_sensitive: isSensitive,
+        is_decoy: isDecoyMode,
         physical_mode: physicalMode,
         struck_items: struckItems,
         device_name: vaultConfig?.device_name || 'My Device',
@@ -176,7 +187,9 @@ export default function DiaryEditor({
         encrypted_data: encryptedBlob,
         preview_title: title.trim() ? title.trim().substring(0, 60) : 'आज की डायरी',
         preview_mood: mood,
-        preview_is_favorite: isFavorite
+        preview_is_favorite: isFavorite,
+        is_sensitive: isSensitive ? 1 : 0,
+        is_decoy: isDecoyMode ? 1 : 0
       };
 
       await saveEncryptedEntry(recordToSave);
@@ -224,6 +237,55 @@ export default function DiaryEditor({
 
         {/* Action Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+
+          {/* Read-Only Protected Freeze Mode Toggle */}
+          {entryToEdit && (
+            <button
+              type="button"
+              onClick={() => setIsReadOnly(!isReadOnly)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '7px 11px',
+                borderRadius: '8px',
+                fontSize: '0.82rem',
+                fontWeight: '600',
+                backgroundColor: isReadOnly ? 'var(--bg-elevated)' : 'var(--warning-light)',
+                color: isReadOnly ? 'var(--text-muted)' : 'var(--warning)',
+                border: `1px solid ${isReadOnly ? 'var(--border-color)' : 'var(--warning)'}`,
+                cursor: 'pointer'
+              }}
+              title={isReadOnly ? 'पन्ना लॉक है (सुरक्षित)। एडिट करने के लिए क्लिक करें।' : 'एडिटिंग चालू है। रीड-ओनली लॉक करने के लिए क्लिक करें।'}
+            >
+              {isReadOnly ? <Lock size={14} /> : <Unlock size={14} />}
+              {isReadOnly ? '🔒 रीड-मोड' : '✏️ संपादन ON'}
+            </button>
+          )}
+
+          {/* Sensitive Page Shield Toggle */}
+          <button
+            type="button"
+            onClick={() => setIsSensitive(!isSensitive)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+              padding: '7px 11px',
+              borderRadius: '8px',
+              fontSize: '0.82rem',
+              fontWeight: '500',
+              backgroundColor: isSensitive ? 'var(--danger-light)' : 'var(--bg-card)',
+              color: isSensitive ? 'var(--danger)' : 'var(--text-muted)',
+              border: `1px solid ${isSensitive ? 'var(--danger)' : 'var(--border-color)'}`,
+              cursor: 'pointer'
+            }}
+            title="संवेदनशील पन्ना शील्ड: लिस्ट में यह पन्ना ब्लर रहेगा"
+          >
+            <ShieldAlert size={14} />
+            {isSensitive ? 'संवेदनशील शील्ड ON' : 'सामान्य'}
+          </button>
+
           {/* Cursive Font Toggle Button */}
           <button
             type="button"
@@ -280,9 +342,9 @@ export default function DiaryEditor({
           {/* Save Button */}
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || isReadOnly}
             className="primary-btn"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 16px', fontSize: '0.88rem', borderRadius: '8px', cursor: 'pointer' }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 16px', fontSize: '0.88rem', borderRadius: '8px', cursor: (saving || isReadOnly) ? 'not-allowed' : 'pointer', opacity: isReadOnly ? 0.6 : 1 }}
           >
             <Lock size={15} />
             {saving ? 'एन्क्रिप्ट हो रहा...' : 'सुरक्षित सेव करें'}
@@ -378,6 +440,7 @@ export default function DiaryEditor({
           type="text"
           placeholder="पन्ने का शीर्षक या आज का मुख्य विषय..."
           value={title}
+          readOnly={isReadOnly}
           onChange={(e) => setTitle(e.target.value)}
           className={fontStyle === 'cursive' ? 'font-cursive' : 'font-standard'}
           style={{ 
@@ -390,9 +453,26 @@ export default function DiaryEditor({
             borderRadius: 0, 
             marginBottom: '16px', 
             backgroundColor: 'transparent',
-            color: 'var(--text-primary)'
+            color: 'var(--text-primary)',
+            opacity: isReadOnly ? 0.9 : 1
           }}
         />
+
+        {/* Read-Only Freeze Mode Friendly Notice */}
+        {isReadOnly && (
+          <div style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', padding: '8px 14px', borderRadius: '8px', fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              🔒 <strong>सुरक्षित पठन मोड:</strong> आकस्मिक डिलीट या टाइपो से सुरक्षित।
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsReadOnly(false)}
+              style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', fontWeight: '600', cursor: 'pointer', fontSize: '0.8rem', textDecoration: 'underline' }}
+            >
+              ✏️ एडिट अनलॉक करें
+            </button>
+          </div>
+        )}
 
         {/* Physical Mode Quick Action Bar */}
         {physicalMode && (
@@ -402,7 +482,8 @@ export default function DiaryEditor({
               <button
                 type="button"
                 onClick={handleStrikeSelectedText}
-                style={{ padding: '3px 8px', fontSize: '0.76rem', borderRadius: '6px', backgroundColor: 'var(--bg-card)', color: 'var(--danger)', border: '1px solid var(--danger)', cursor: 'pointer' }}
+                disabled={isReadOnly}
+                style={{ padding: '3px 8px', fontSize: '0.76rem', borderRadius: '6px', backgroundColor: 'var(--bg-card)', color: 'var(--danger)', border: '1px solid var(--danger)', cursor: isReadOnly ? 'not-allowed' : 'pointer', opacity: isReadOnly ? 0.5 : 1 }}
               >
                 काटें (Strike Selected Text)
               </button>
@@ -454,6 +535,7 @@ export default function DiaryEditor({
         {/* Main Text Content Area (Cursive / Standard Font) */}
         <textarea
           ref={editorRef}
+          readOnly={isReadOnly}
           placeholder="यहाँ अपने मन के विचार, आज की घटनाएं या गुप्त योजनाएं लिखें...&#10;सब कुछ केवल आपके डिवाइस पर एन्क्रिप्ट होकर सुरक्षित रहेगा।"
           value={content}
           onChange={(e) => setContent(e.target.value)}
@@ -464,9 +546,10 @@ export default function DiaryEditor({
             padding: '12px 6px', 
             border: 'none', 
             resize: 'vertical', 
-            backgroundColor: 'transparent',
+            backgroundColor: isReadOnly ? 'rgba(0,0,0,0.02)' : 'transparent',
             color: 'var(--text-primary)',
             outline: 'none',
+            cursor: isReadOnly ? 'default' : 'text'
           }}
         />
 

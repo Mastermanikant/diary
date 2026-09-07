@@ -12,10 +12,12 @@ import {
   X, 
   AlertTriangle, 
   CheckCircle2,
-  Lock
+  Lock,
+  Users,
+  Shield
 } from 'lucide-react';
 import { deriveKeyFromPassphrase, encryptPayload, generateRandomBytes, bufferToBase64, base64ToBuffer, wrapDek, unwrapDek } from '../crypto/vaultCrypto';
-import { saveVaultConfig, clearAllVaultData } from '../storage/localVault';
+import { saveVaultConfig, clearAllVaultData, saveEncryptedEntry } from '../storage/localVault';
 
 export default function SettingsModal({ 
   isOpen, 
@@ -25,7 +27,8 @@ export default function SettingsModal({
   currentTheme, 
   onToggleTheme, 
   currentPassphrase,
-  onPassphraseChanged 
+  onPassphraseChanged,
+  isDecoyMode = false 
 }) {
   const [deviceName, setDeviceName] = useState(vaultConfig?.device_name || 'My Device');
   const [physicalMode, setPhysicalMode] = useState(vaultConfig?.physical_diary_mode ?? true);
@@ -35,6 +38,11 @@ export default function SettingsModal({
   const [oldPin, setOldPin] = useState('');
   const [newPin, setNewPin] = useState('');
   const [newPinConfirm, setNewPinConfirm] = useState('');
+
+  // Plausible Deniability / Decoy PIN states
+  const [decoyPin, setDecoyPin] = useState('');
+  const [decoyPinConfirm, setDecoyPinConfirm] = useState('');
+  const [showDecoySetup, setShowDecoySetup] = useState(false);
 
   const [statusMsg, setStatusMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -123,6 +131,109 @@ export default function SettingsModal({
 
     } catch (err) {
       setErrorMsg('पिन बदलने में त्रुटि: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Save / Update Decoy / Family PIN (Plausible Deniability)
+  async function handleSaveDecoyPin(e) {
+    e.preventDefault();
+    setErrorMsg('');
+    setStatusMsg('');
+
+    if (decoyPin.length < 4) {
+      setErrorMsg('पारिवारिक पिन कम से कम 4 अक्षरों का होना चाहिए');
+      return;
+    }
+    if (decoyPin !== decoyPinConfirm) {
+      setErrorMsg('पारिवारिक पिन दोनों जगह मेल नहीं खा रहा');
+      return;
+    }
+    if (decoyPin === currentPassphrase) {
+      setErrorMsg('पारिवारिक पिन और मास्टर पिन समान नहीं हो सकते!');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const decoySalt = generateRandomBytes(16);
+      const decoySaltBase64 = bufferToBase64(decoySalt.buffer);
+      const decoyKey = await deriveKeyFromPassphrase(decoyPin, decoySalt);
+      const decoyVerifier = await encryptPayload(decoyKey, 'FRANKDIARY_DECOY_VALID_TOKEN');
+
+      // Seed a friendly initial family diary entry if enabling for first time
+      if (!vaultConfig?.decoy_vault_enabled) {
+        const samplePayload = {
+          title: 'पारिवारिक सुखद शुरुआत 🌸',
+          content: 'यह हमारी पारिवारिक डायरी है। यहाँ हम घर की अच्छी यादें, बच्चों की बातें, त्योहारों की खुशियाँ और भविष्य की योजनाएं लिख सकते हैं।',
+          mood: 'happy',
+          tags: ['family', 'memories'],
+          vault_category: 'personal',
+          font_style: 'cursive',
+          is_favorite: true,
+          physical_mode: true,
+          is_sensitive: false,
+          is_decoy: true,
+          created_at: Date.now(),
+          device_name: vaultConfig?.device_name || 'My Device'
+        };
+        const encBlob = await encryptPayload(decoyKey, samplePayload);
+        await saveEncryptedEntry({
+          id: 'decoy_welcome_' + Date.now(),
+          date: new Date().toISOString().split('T')[0],
+          time: new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }),
+          vault_category: 'personal',
+          created_at: Date.now(),
+          updated_at: Date.now(),
+          device_name: vaultConfig?.device_name || 'My Device',
+          sync_status: 'local_only',
+          encrypted_data: encBlob,
+          preview_title: 'पारिवारिक सुखद शुरुआत 🌸',
+          preview_mood: 'happy',
+          preview_is_favorite: true,
+          is_decoy: 1
+        });
+      }
+
+      const updatedConfig = {
+        ...vaultConfig,
+        decoy_vault_enabled: true,
+        decoy_salt: decoySaltBase64,
+        decoy_verifier_blob: decoyVerifier
+      };
+
+      await saveVaultConfig(updatedConfig);
+      onConfigUpdated(updatedConfig);
+      setStatusMsg('👨‍👩‍👧‍👦 बहु-पासवर्ड वॉल्ट (Plausible Deniability) सफलतापूर्वक सक्रिय हो गया!');
+      setDecoyPin('');
+      setDecoyPinConfirm('');
+      setShowDecoySetup(false);
+      setTimeout(() => setStatusMsg(''), 4000);
+    } catch (err) {
+      setErrorMsg('पारिवारिक वॉल्ट सेटअप त्रुटि: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Disable Decoy Vault
+  async function handleDisableDecoyVault() {
+    if (!confirm('क्या आप पारिवारिक वॉल्ट को अक्षम (Disable) करना चाहते हैं? इसके बाद यह पिन काम नहीं करेगा।')) {
+      return;
+    }
+    try {
+      setLoading(true);
+      const updatedConfig = {
+        ...vaultConfig,
+        decoy_vault_enabled: false
+      };
+      await saveVaultConfig(updatedConfig);
+      onConfigUpdated(updatedConfig);
+      setStatusMsg('पारिवारिक वॉल्ट अक्षम कर दिया गया।');
+      setTimeout(() => setStatusMsg(''), 3000);
+    } catch (err) {
+      setErrorMsg('त्रुटि: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -300,6 +411,94 @@ export default function SettingsModal({
             पिन अपडेट करें
           </button>
         </form>
+
+        {/* Section 3B: Plausible Deniability / Family Vault PIN */}
+        {!isDecoyMode && (
+          <div style={{ paddingBottom: '16px', borderBottom: '1px solid var(--border-subtle)', marginBottom: '18px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <h4 style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Users size={16} color="var(--accent-primary)" />
+                गोपनीय पारिवारिक वॉल्ट (Family / Decoy PIN)
+              </h4>
+              {vaultConfig?.decoy_vault_enabled && (
+                <span style={{ fontSize: '0.72rem', backgroundColor: 'var(--success-light)', color: 'var(--success)', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
+                  सक्रिय (Active)
+                </span>
+              )}
+            </div>
+
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.45 }}>
+              <strong>प्लाउज़िबल डिनायेबिलिटी (Plausible Deniability):</strong> यदि कोई मित्र या परिवार का सदस्य डायरी खोलने की ज़िद करे, तो उन्हें यह अलग 'पारिवारिक पिन' दें। इससे केवल सामान्य पारिवारिक पन्ने खुलेंगे, और ऐप में 1% भी पता नहीं चलेगा कि कोई दूसरा गुप्त वॉल्ट मौजूद है।
+            </p>
+
+            {vaultConfig?.decoy_vault_enabled && !showDecoySetup && (
+              <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '12px', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>पारिवारिक पिन लॉक चालू है</span>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowDecoySetup(true)}
+                      style={{ padding: '4px 10px', fontSize: '0.78rem', borderRadius: '6px' }}
+                    >
+                      पिन बदलें
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDisableDecoyVault}
+                      style={{ padding: '4px 10px', fontSize: '0.78rem', borderRadius: '6px', color: 'var(--danger)', borderColor: 'var(--danger)', background: 'transparent' }}
+                    >
+                      अक्षम करें
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {(!vaultConfig?.decoy_vault_enabled || showDecoySetup) && (
+              <form onSubmit={handleSaveDecoyPin} style={{ backgroundColor: 'var(--bg-elevated)', padding: '12px', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {vaultConfig?.decoy_vault_enabled ? 'नया पारिवारिक पिन सेट करें:' : 'पारिवारिक पिन सेट करें:'}
+                </span>
+                <input
+                  type="password"
+                  placeholder="पारिवारिक पिन (उदा. 4-8 अंक)"
+                  value={decoyPin}
+                  onChange={(e) => setDecoyPin(e.target.value)}
+                  required
+                  style={{ padding: '7px 10px', fontSize: '0.85rem' }}
+                />
+                <input
+                  type="password"
+                  placeholder="पारिवारिक पिन दोबारा दर्ज करें"
+                  value={decoyPinConfirm}
+                  onChange={(e) => setDecoyPinConfirm(e.target.value)}
+                  required
+                  style={{ padding: '7px 10px', fontSize: '0.85rem' }}
+                />
+                <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="primary-btn"
+                    style={{ flex: 1, padding: '7px', fontSize: '0.82rem', borderRadius: '6px' }}
+                  >
+                    पारिवारिक पिन सुरक्षित करें
+                  </button>
+                  {showDecoySetup && (
+                    <button
+                      type="button"
+                      onClick={() => setShowDecoySetup(false)}
+                      style={{ padding: '7px 12px', fontSize: '0.82rem', borderRadius: '6px', background: 'transparent', border: '1px solid var(--border-color)' }}
+                    >
+                      रद्द करें
+                    </button>
+                  )}
+                </div>
+              </form>
+            )}
+          </div>
+        )}
 
         {/* Section 4: Factory Reset (Danger Zone) */}
         <div style={{ marginBottom: '18px' }}>

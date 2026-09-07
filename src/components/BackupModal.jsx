@@ -105,6 +105,41 @@ export default function BackupModal({
     setStatusMsg('अनएन्क्रिप्टेड JSON फाइल डाउनलोड हो गई!');
   }
 
+  // Export Unencrypted Human-Readable Markdown (.md)
+  function handleExportMarkdown() {
+    if (!confirm('चेतावनी: यह अनएन्क्रिप्टेड मार्कडाउन (.md) फाइल होगी जिसे कोई भी पढ़ सकता है। क्या आप इसे डाउनलोड करना चाहते हैं?')) {
+      return;
+    }
+
+    let mdContent = `# FrankDiary Personal Export\nExported on: ${new Date().toLocaleDateString('hi-IN')}\nTotal Entries: ${entries.length}\nGenerator: FrankDiary (FrankBase Ecosystem)\n\n---\n\n`;
+    
+    entries.forEach((e, idx) => {
+      mdContent += `### ${idx + 1}. ${e.title || 'शीर्षक रहित पन्ना'} (${e.date} ${e.time})\n`;
+      mdContent += `* **मूड:** ${e.mood || 'सामान्य'} | **वाल्ट:** ${e.vault_category || 'personal'} | **टैग्स:** ${(e.tags || []).join(', ')}*\n\n`;
+      mdContent += `${e.content}\n\n`;
+      if (e.struck_items && e.struck_items.length > 0) {
+        mdContent += `> *फिजिकल स्ट्राइक-थ्रू शब्द (${e.struck_items.length}):*\n`;
+        e.struck_items.forEach(s => {
+          mdContent += `> - ~~${s.text}~~ *(${s.timestamp})*\n`;
+        });
+        mdContent += `\n`;
+      }
+      mdContent += `---\n\n`;
+    });
+
+    const blob = new Blob([mdContent], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `FrankDiary_Markdown_${new Date().toISOString().split('T')[0]}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    setStatusMsg('रीडेबल मार्कडाउन (.md) फाइल डाउनलोड हो गई!');
+  }
+
   // ==========================================
   // IMPORT BACKUP FILE
   // ==========================================
@@ -193,53 +228,71 @@ export default function BackupModal({
         )}
 
         {/* ========================================== */}
-        {/* TAB 1: EXPORT */}
+        {/* TAB 1: EXPORT (DUAL-MODE DOWNLOAD) */}
         {/* ========================================== */}
         {activeTab === 'export' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '14px', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-                <ShieldCheck size={22} color="var(--accent-primary)" style={{ flexShrink: 0, marginTop: '2px' }} />
-                <div>
-                  <h4 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
-                    एन्क्रिप्टेड बैकअप (.fbe कंटेनर) — सुरक्षित
+            
+            {/* Mode 1: Encrypted Backup (By Default) */}
+            <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '16px', borderRadius: '12px', border: '1px solid var(--accent-primary)', position: 'relative' }}>
+              <span style={{ position: 'absolute', top: '-10px', right: '14px', backgroundColor: 'var(--accent-primary)', color: '#ffffff', fontSize: '0.7rem', fontWeight: '700', padding: '2px 8px', borderRadius: '10px' }}>
+                डिफ़ॉल्ट व सुरक्षित
+              </span>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                <ShieldCheck size={26} color="var(--accent-primary)" style={{ flexShrink: 0, marginTop: '2px' }} />
+                <div style={{ flex: 1 }}>
+                  <h4 style={{ fontSize: '0.98rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                    मोड 1: एन्क्रिप्टेड बैकअप (.fbe कंटेनर)
                   </h4>
-                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.4 }}>
-                    यह फाइल आपके मास्टर पासवर्ड से सील होगी। इसे गूगल ड्राइव, पेनड्राइव या किसी को भी भेजें—बिना पासवर्ड के कोई नहीं पढ़ सकता।
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.5 }}>
+                    यह फाइल आपके मास्टर पासवर्ड और AES-256-GCM से सील होगी। इसे क्लाउड या पेनड्राइव में कहीं भी रखें—बिना पासवर्ड के दुनिया की कोई ताकत इसे नहीं पढ़ सकती।
                   </p>
                   <button
                     onClick={handleExportEncrypted}
                     disabled={loading}
                     className="primary-btn"
-                    style={{ padding: '8px 16px', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    style={{ padding: '9px 18px', fontSize: '0.88rem', display: 'inline-flex', alignItems: 'center', gap: '6px', borderRadius: '8px', cursor: 'pointer' }}
                   >
                     <Lock size={15} />
-                    {loading ? 'तैयार हो रहा...' : `एन्क्रिप्टेड बैकअप डाउनलोड करें (${entries.length} पन्ने)`}
+                    {loading ? 'तैयार हो रहा...' : `सुरक्षित .fbe डाउनलोड करें (${entries.length} पन्ने)`}
                   </button>
                 </div>
               </div>
             </div>
 
-            <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '14px', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-                <FileText size={22} color="var(--warning)" style={{ flexShrink: 0, marginTop: '2px' }} />
-                <div>
-                  <h4 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
-                    अनएन्क्रिप्टेड JSON एक्सपोर्ट (एंटी-लॉक-इन)
-                  </h4>
-                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.4 }}>
-                    अगर आप अपनी डायरी को वर्ड, नोटपैड या किसी अन्य ऐप में ले जाना चाहते हैं।
+            {/* Mode 2: Unencrypted Plaintext (User Choice) */}
+            <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                <FileText size={26} color="var(--warning)" style={{ flexShrink: 0, marginTop: '2px' }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                    <h4 style={{ fontSize: '0.98rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      मोड 2: अन-एन्क्रिप्टेड ओपन डाउनलोड (यूज़र चयन)
+                    </h4>
+                  </div>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.5 }}>
+                    एंटी-लॉक-इन गारंटी: यदि आप अपनी डायरी को वर्ड, नोटपैड या किसी अन्य ऐप में ले जाना चाहते हैं। <strong style={{ color: 'var(--warning)' }}>(चेतावनी: यह खुला टेक्स्ट होगा)</strong>
                   </p>
-                  <button
-                    onClick={handleExportPlaintext}
-                    style={{ padding: '8px 16px', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--bg-card)' }}
-                  >
-                    <Download size={15} />
-                    सादा JSON डाउनलोड करें
-                  </button>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={handleExportPlaintext}
+                      style={{ padding: '8px 14px', fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', cursor: 'pointer' }}
+                    >
+                      <Download size={14} />
+                      ओपन JSON डाउनलोड (.json)
+                    </button>
+                    <button
+                      onClick={handleExportMarkdown}
+                      style={{ padding: '8px 14px', fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', cursor: 'pointer' }}
+                    >
+                      <FileText size={14} />
+                      रीडेबल मार्कडाउन (.md)
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
+
           </div>
         )}
 

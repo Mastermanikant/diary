@@ -13,7 +13,10 @@ import {
   Filter,
   FileText,
   FolderLock,
-  Type
+  Type,
+  ShieldAlert,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 
 const MOOD_EMOJIS = {
@@ -45,6 +48,7 @@ export default function EntryList({
   const [selectedVault, setSelectedVault] = useState('all');
   const [selectedTag, setSelectedTag] = useState(null);
   const [onlyFavorites, setOnlyFavorites] = useState(false);
+  const [revealedSensitive, setRevealedSensitive] = useState({});
 
   // Extract all unique tags across decrypted entries in RAM
   const allAvailableTags = useMemo(() => {
@@ -334,6 +338,17 @@ export default function EntryList({
                       फिजिकल
                     </span>
                   )}
+
+                  {/* Sensitive Page Shield Indicator */}
+                  {entry.is_sensitive && (
+                    <span 
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '0.7rem', color: 'var(--danger)', backgroundColor: 'var(--danger-light)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}
+                      title="संवेदनशील पन्ना (शील्ड सक्रिय)"
+                    >
+                      <ShieldAlert size={10} />
+                      संवेदनशील
+                    </span>
+                  )}
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }} onClick={(e) => e.stopPropagation()}>
@@ -362,33 +377,106 @@ export default function EntryList({
 
               </div>
 
-              {/* Title & Preview */}
-              <h3 
-                className={entry.font_style === 'cursive' ? 'font-cursive' : 'font-standard'}
-                style={{ 
-                  fontSize: entry.font_style === 'cursive' ? '1.25rem' : '1.05rem', 
-                  fontWeight: 700, 
-                  color: 'var(--text-primary)', 
-                  marginBottom: '6px' 
-                }}
-              >
-                {entry.title || 'शीर्षक रहित डायरी'}
-              </h3>
+              {/* Title & Preview (With Anti-Shoulder-Surfing Privacy Shield) */}
+              <div style={{ position: 'relative', overflow: 'hidden', borderRadius: '8px' }}>
+                <div style={{
+                  filter: (entry.is_sensitive && !revealedSensitive[entry.id]) ? 'blur(7px)' : 'none',
+                  userSelect: (entry.is_sensitive && !revealedSensitive[entry.id]) ? 'none' : 'auto',
+                  transition: 'filter 0.2s ease',
+                  pointerEvents: (entry.is_sensitive && !revealedSensitive[entry.id]) ? 'none' : 'auto'
+                }}>
+                  <h3 
+                    className={entry.font_style === 'cursive' ? 'font-cursive' : 'font-standard'}
+                    style={{ 
+                      fontSize: entry.font_style === 'cursive' ? '1.25rem' : '1.05rem', 
+                      fontWeight: 700, 
+                      color: 'var(--text-primary)', 
+                      marginBottom: '6px' 
+                    }}
+                  >
+                    {entry.title || 'शीर्षक रहित डायरी'}
+                  </h3>
 
-              <p 
-                className={entry.font_style === 'cursive' ? 'font-cursive' : 'font-standard'}
-                style={{ 
-                  fontSize: entry.font_style === 'cursive' ? '1.05rem' : '0.85rem', 
-                  color: 'var(--text-secondary)', 
-                  lineHeight: entry.font_style === 'cursive' ? 1.7 : 1.5, 
-                  display: '-webkit-box', 
-                  WebKitLineClamp: 3, 
-                  WebKitBoxOrient: 'vertical', 
-                  overflow: 'hidden' 
-                }}
-              >
-                {entry.content || 'कोई मुख्य विवरण नहीं...'}
-              </p>
+                  <p 
+                    className={entry.font_style === 'cursive' ? 'font-cursive' : 'font-standard'}
+                    style={{ 
+                      fontSize: entry.font_style === 'cursive' ? '1.05rem' : '0.85rem', 
+                      color: 'var(--text-secondary)', 
+                      lineHeight: entry.font_style === 'cursive' ? 1.7 : 1.5, 
+                      display: '-webkit-box', 
+                      WebKitLineClamp: 3, 
+                      WebKitBoxOrient: 'vertical', 
+                      overflow: 'hidden' 
+                    }}
+                  >
+                    {entry.content || 'कोई मुख्य विवरण नहीं...'}
+                  </p>
+                </div>
+
+                {/* Privacy Shield Tap-to-Reveal Overlay */}
+                {entry.is_sensitive && !revealedSensitive[entry.id] && (
+                  <div 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRevealedSensitive(prev => ({ ...prev, [entry.id]: true }));
+                    }}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      zIndex: 3,
+                      cursor: 'pointer',
+                      backgroundColor: 'rgba(0, 0, 0, 0.12)',
+                      borderRadius: '8px'
+                    }}
+                    title="पन्ना देखने के लिए टैप करें"
+                  >
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      backgroundColor: 'var(--bg-card)',
+                      color: 'var(--danger)',
+                      border: '1px solid var(--danger)',
+                      padding: '7px 14px',
+                      borderRadius: '20px',
+                      fontSize: '0.8rem',
+                      fontWeight: '600',
+                      boxShadow: 'var(--shadow-md)'
+                    }}>
+                      <Eye size={14} /> 🛡️ संवेदनशील पन्ना — पढ़ने के लिए टैप करें
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Re-hide Option for Revealed Sensitive Pages */}
+              {entry.is_sensitive && revealedSensitive[entry.id] && (
+                <div style={{ marginTop: '4px' }}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRevealedSensitive(prev => ({ ...prev, [entry.id]: false }));
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--text-muted)',
+                      fontSize: '0.72rem',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '2px 0'
+                    }}
+                  >
+                    <EyeOff size={12} /> शील्ड पुनः लगाएं (ब्लर करें)
+                  </button>
+                </div>
+              )}
 
               {/* Struck-Out Items Count (Physical Mode) */}
               {entry.struck_items && entry.struck_items.length > 0 && (

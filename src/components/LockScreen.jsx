@@ -245,19 +245,46 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
 
     try {
       setLoading(true);
-      const saltBytes = new Uint8Array(base64ToBuffer(vaultConfig.salt));
-      const masterKey = await deriveKeyFromPassphrase(enteredPin, saltBytes);
 
-      const verified = await decryptPayload(masterKey, vaultConfig.verifier_blob);
-      if (verified === 'FRANKDIARY_VALID_KEY_TOKEN') {
-        onUnlockSuccess({
-          masterKey,
-          config: vaultConfig,
-          passphrase: enteredPin
-        });
-      } else {
-        setErrorMsg('अमान्य पिन या पासफ़्रेज़');
+      // 1. Try Primary Vault Key
+      try {
+        const saltBytes = new Uint8Array(base64ToBuffer(vaultConfig.salt));
+        const masterKey = await deriveKeyFromPassphrase(enteredPin, saltBytes);
+        const verified = await decryptPayload(masterKey, vaultConfig.verifier_blob);
+        if (verified === 'FRANKDIARY_VALID_KEY_TOKEN') {
+          onUnlockSuccess({
+            masterKey,
+            config: vaultConfig,
+            passphrase: enteredPin,
+            isDecoyMode: false
+          });
+          return;
+        }
+      } catch {
+        // Not primary key, continue to check decoy
       }
+
+      // 2. Try Decoy / Family Vault Key (Plausible Deniability)
+      if (vaultConfig.decoy_vault_enabled && vaultConfig.decoy_salt && vaultConfig.decoy_verifier_blob) {
+        try {
+          const decoySaltBytes = new Uint8Array(base64ToBuffer(vaultConfig.decoy_salt));
+          const decoyKey = await deriveKeyFromPassphrase(enteredPin, decoySaltBytes);
+          const decoyVerified = await decryptPayload(decoyKey, vaultConfig.decoy_verifier_blob);
+          if (decoyVerified === 'FRANKDIARY_DECOY_VALID_TOKEN') {
+            onUnlockSuccess({
+              masterKey: decoyKey,
+              config: vaultConfig,
+              passphrase: enteredPin,
+              isDecoyMode: true
+            });
+            return;
+          }
+        } catch {
+          // Not decoy key either
+        }
+      }
+
+      setErrorMsg('अमान्य पिन या पासफ़्रेज़');
     } catch {
       setErrorMsg('अमान्य पिन या पासफ़्रेज़');
     } finally {
