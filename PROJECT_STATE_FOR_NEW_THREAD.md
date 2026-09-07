@@ -1,8 +1,8 @@
-﻿# 🧭 FrankDiary: Project State & Context Handoff for New Session
+# 🧭 FrankDiary: Project State & Context Handoff for New Session
 ## Instant Zero-Loss Resumption Anchor
 
 > **Project Identity:** FrankDiary (`dairy.frankbase.com` / `frankdiary.pages.dev`)  
-> **Repository Location:** `D:\01_Websites_and_Content\MMY_Website_Project\22_ood.frankbase.com`  
+> **Repository Location:** `D:\01_Websites_and_Content\MMY_Website_Project\Diary`  
 > **GitHub Remote:** `https://github.com/Mastermanikant/diary.git`  
 > **Live Production Edge:** `https://frankdiary.pages.dev`  
 > **Central Command Database:** Cloudflare D1 `mmcentral-db` (`c5a92a6e-b2b8-4d83-a814-2ff2c300f52a`)  
@@ -69,7 +69,7 @@
 ## 📁 4. Project Directory Map
 
 ```
-D:\01_Websites_and_Content\MMY_Website_Project\22_ood.frankbase.com\
+D:\01_Websites_and_Content\MMY_Website_Project\Diary\
 ├── COMPLETE_CHAT_CONVERSATION_HISTORY_A_TO_Z.md   (Complete full conversation export)
 ├── PROJECT_STATE_FOR_NEW_THREAD.md               (This master resumption anchor)
 ├── project_map.json                              (Local metadata & build status)
@@ -108,5 +108,5 @@ D:\01_Websites_and_Content\MMY_Website_Project\22_ood.frankbase.com\
 Simply paste this prompt in your new chat session:
 ```
 "हम FrankDiary प्रोजेक्ट पर काम कर रहे हैं। 
-कृपया D:\01_Websites_and_Content\MMY_Website_Project\22_ood.frankbase.com\PROJECT_STATE_FOR_NEW_THREAD.md को पढ़कर तुरंत प्रोजेक्ट का कॉन्टेक्स्ट लोड करें और हमारे तय प्लान के अनुसार Natural Diary Footnote Revision Tracker (word^[N]) और Multi-Profile Unlimited Hidden Diaries की कोडिंग शुरू करें।"
+कृपया D:\01_Websites_and_Content\MMY_Website_Project\Diary\PROJECT_STATE_FOR_NEW_THREAD.md को पढ़कर तुरंत प्रोजेक्ट का कॉन्टेक्स्ट लोड करें और हमारे तय प्लान के अनुसार Natural Diary Footnote Revision Tracker (word^[N]) और Multi-Profile Unlimited Hidden Diaries की कोडिंग शुरू करें।"
 ```
