@@ -12,9 +12,21 @@ import {
   Smartphone,
   CheckCircle2,
   XCircle,
-  HelpCircle
+  HelpCircle,
+  Key
 } from 'lucide-react';
-import { deriveKeyFromPassphrase, encryptPayload, decryptPayload, generateRandomBytes, bufferToBase64, hashSecretAnswer } from '../crypto/vaultCrypto';
+import { 
+  deriveKeyFromPassphrase, 
+  deriveKeyFromSecretAnswer,
+  encryptPayload, 
+  decryptPayload, 
+  generateRandomBytes, 
+  bufferToBase64, 
+  base64ToBuffer,
+  hashSecretAnswer,
+  wrapDek,
+  unwrapDek
+} from '../crypto/vaultCrypto';
 import { getVaultConfig, saveVaultConfig } from '../storage/localVault';
 
 export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme }) {
@@ -30,7 +42,7 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
   // New Vault setup state
   const [setupPin, setSetupPin] = useState('');
   const [setupPinConfirm, setSetupPinConfirm] = useState('');
-  const [unlockMethod, setUnlockMethod] = useState('pin'); // 'pin', 'biometric', 'frankpass'
+  const [unlockMethod, setUnlockMethod] = useState('pin');
   const [secretQuestion, setSecretQuestion] = useState('मेरी पहली पसंदीदा पुस्तक या शिक्षक का नाम?');
   const [customQuestion, setCustomQuestion] = useState('');
   const [secretAnswer, setSecretAnswer] = useState('');
@@ -40,26 +52,44 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
   // Time-delayed reset dialog state
   const [showResetModal, setShowResetModal] = useState(false);
   const [answerAttempt, setAnswerAttempt] = useState('');
+  const [resetNewPin, setResetNewPin] = useState('');
+  const [resetNewPinConfirm, setResetNewPinConfirm] = useState('');
   const [resetCountdown, setResetCountdown] = useState(null);
 
   useEffect(() => {
     checkVaultState();
   }, []);
 
-  // Update live countdown if a reset is pending
+  // Update live countdown and auto-promote new password when delay expires
   useEffect(() => {
     if (!vaultConfig?.pending_reset?.active) {
       setResetCountdown(null);
       return;
     }
 
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       const now = Date.now();
       const unlocksAt = vaultConfig.pending_reset.unlocks_at;
       const remainingMs = unlocksAt - now;
 
       if (remainingMs <= 0) {
-        setResetCountdown('00:00:00 (रीसेट अनलॉक हो चुका है)');
+        // TIME DELAY HAS EXPIRED! Automatically promote the staged new password!
+        clearInterval(interval);
+        try {
+          const promotedConfig = {
+            ...vaultConfig,
+            salt: vaultConfig.pending_reset.proposed_salt,
+            verifier_blob: vaultConfig.pending_reset.proposed_verifier,
+            wrapped_dek: vaultConfig.pending_reset.proposed_wrapped_dek || vaultConfig.wrapped_dek,
+            pending_reset: { active: false, requested_at: null, unlocks_at: null, proposed_salt: null, proposed_verifier: null, proposed_wrapped_dek: null }
+          };
+          await saveVaultConfig(promotedConfig);
+          setVaultConfig(promotedConfig);
+          setResetCountdown(null);
+          setSuccessMsg('🎉 सुरक्षा टाइमर पूरा हो चुका है! आपका नया पासवर्ड अब सक्रिय (Active) हो चुका है। कृपया नए पासवर्ड से लॉगिन करें।');
+        } catch (err) {
+          console.error('Promotion error:', err);
+        }
       } else {
         const hours = Math.floor(remainingMs / (1000 * 60 * 60));
         const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
@@ -77,15 +107,29 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
       const config = await getVaultConfig();
       if (!config) {
         setIsNewVault(true);
-        // Detect device name
         const userAgent = navigator.userAgent;
         if (/Android/i.test(userAgent)) setDeviceName('Android फोन');
         else if (/iPhone|iPad/i.test(userAgent)) setDeviceName('Apple डिवाइस');
         else if (/Windows/i.test(userAgent)) setDeviceName('Windows कंप्यूटर');
         else setDeviceName('व्यक्तिगत डिवाइस');
       } else {
-        setIsNewVault(false);
-        setVaultConfig(config);
+        // Check if delay expired while app was closed
+        if (config.pending_reset?.active && Date.now() >= config.pending_reset.unlocks_at) {
+          const promotedConfig = {
+            ...config,
+            salt: config.pending_reset.proposed_salt,
+            verifier_blob: config.pending_reset.proposed_verifier,
+            wrapped_dek: config.pending_reset.proposed_wrapped_dek || config.wrapped_dek,
+            pending_reset: { active: false, requested_at: null, unlocks_at: null, proposed_salt: null, proposed_verifier: null, proposed_wrapped_dek: null }
+          };
+          await saveVaultConfig(promotedConfig);
+          setIsNewVault(false);
+          setVaultConfig(promotedConfig);
+          setSuccessMsg('🎉 सुरक्षा टाइमर पूरा हो चुका है! आपका नया पासवर्ड सक्रिय हो गया है। कृपया नए पासवर्ड से लॉगिन करें।');
+        } else {
+          setIsNewVault(false);
+          setVaultConfig(config);
+        }
       }
     } catch (err) {
       setErrorMsg('वॉल्ट लोड करने में त्रुटि: ' + err.message);
@@ -119,13 +163,23 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
       const saltBytes = generateRandomBytes(16);
       const saltBase64 = bufferToBase64(saltBytes.buffer);
 
-      // Derive key
+      // Generate a random 32-byte Data Encryption Key (DEK)
+      const rawDekBytes = generateRandomBytes(32);
+
+      // Derive Master Key from user PIN
       const masterKey = await deriveKeyFromPassphrase(setupPin, saltBytes);
+
+      // Derive Recovery Key from Secret Answer
+      const recoveryKey = await deriveKeyFromSecretAnswer(secretAnswer, saltBytes);
+
+      // Wrap DEK with MasterKey and with RecoveryKey
+      const wrappedDek = await wrapDek(masterKey, rawDekBytes);
+      const recoveryWrappedDek = await wrapDek(recoveryKey, rawDekBytes);
 
       // Create verifier blob to test valid decryption in the future
       const verifierBlob = await encryptPayload(masterKey, 'FRANKDIARY_VALID_KEY_TOKEN');
 
-      // Hash secret answer
+      // Hash secret answer for quick verification check
       const answerHash = await hashSecretAnswer(secretAnswer, saltBytes);
 
       const finalQuestion = customQuestion.trim() ? customQuestion.trim() : secretQuestion;
@@ -134,19 +188,20 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
         created_at: Date.now(),
         salt: saltBase64,
         verifier_blob: verifierBlob,
+        wrapped_dek: wrappedDek,
+        recovery_wrapped_dek: recoveryWrappedDek,
         unlock_method: unlockMethod,
         secret_question: finalQuestion,
         secret_answer_hash: answerHash,
         reset_delay_hours: parseInt(resetDelayHours, 10) || 24,
         device_name: deviceName.trim() || 'My Device',
-        physical_diary_mode: true, // Default to physical mode
+        physical_diary_mode: true,
         pending_reset: { active: false, requested_at: null, unlocks_at: null }
       };
 
       await saveVaultConfig(newConfig);
       setSuccessMsg('सुरक्षित वॉल्ट सफलतापूर्वक तैयार हो गया!');
 
-      // Proceed into app
       setTimeout(() => {
         onUnlockSuccess({
           masterKey,
@@ -176,7 +231,7 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
 
     try {
       setLoading(true);
-      const saltBytes = new Uint8Array(bufferToBase64ToBuffer(vaultConfig.salt));
+      const saltBytes = new Uint8Array(base64ToBuffer(vaultConfig.salt));
       const masterKey = await deriveKeyFromPassphrase(enteredPin, saltBytes);
 
       // Verify key against verifier_blob
@@ -191,7 +246,7 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
       } else {
         setErrorMsg('अमान्य पिन या पासफ़्रेज़');
       }
-    } catch (err) {
+    } catch {
       setErrorMsg('अमान्य पिन या पासफ़्रेज़');
     } finally {
       setLoading(false);
@@ -214,35 +269,59 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
     }
   }
 
-  // Helper to convert base64 to buffer
-  function bufferToBase64ToBuffer(base64) {
-    const binary = window.atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes.buffer;
-  }
-
   // ==========================================
-  // TIME-DELAYED RESET HANDLERS
+  // TIME-DELAYED RESET: STAGE NEW PASSWORD
   // ==========================================
   async function handleInitiateReset(e) {
     e.preventDefault();
     setErrorMsg('');
 
+    if (!answerAttempt.trim()) {
+      setErrorMsg('कृपया सीक्रेट उत्तर दर्ज करें');
+      return;
+    }
+    if (resetNewPin.length < 4) {
+      setErrorMsg('नया पिन कम से कम 4 अक्षरों का होना चाहिए');
+      return;
+    }
+    if (resetNewPin !== resetNewPinConfirm) {
+      setErrorMsg('नया पिन दोनों जगह आपस में मेल नहीं खा रहा');
+      return;
+    }
+
     try {
-      const saltBytes = new Uint8Array(bufferToBase64ToBuffer(vaultConfig.salt));
+      setLoading(true);
+      const saltBytes = new Uint8Array(base64ToBuffer(vaultConfig.salt));
       const attemptedHash = await hashSecretAnswer(answerAttempt, saltBytes);
 
       if (attemptedHash !== vaultConfig.secret_answer_hash) {
-        setErrorMsg('सीक्रेट क्वेश्चन का उत्तर गलत है');
+        setErrorMsg('सीक्रेट क्वेश्चन का उत्तर गलत है!');
+        setLoading(false);
         return;
       }
 
-      // Secret answer matches! Start time delay window
+      // Secret answer verified!
+      // Generate proposed new salt and derive proposed new master key
+      const proposedSaltBytes = generateRandomBytes(16);
+      const proposedSaltBase64 = bufferToBase64(proposedSaltBytes.buffer);
+      const proposedMasterKey = await deriveKeyFromPassphrase(resetNewPin, proposedSaltBytes);
+      const proposedVerifier = await encryptPayload(proposedMasterKey, 'FRANKDIARY_VALID_KEY_TOKEN');
+
+      let proposedWrappedDek = null;
+
+      // If vault has recovery_wrapped_dek, unwrap DEK and re-wrap with proposedMasterKey
+      if (vaultConfig.recovery_wrapped_dek) {
+        try {
+          const recoveryKey = await deriveKeyFromSecretAnswer(answerAttempt, saltBytes);
+          const { rawBytes: rawDek } = await unwrapDek(recoveryKey, vaultConfig.recovery_wrapped_dek);
+          proposedWrappedDek = await wrapDek(proposedMasterKey, rawDek);
+        } catch (unwErr) {
+          console.warn('DEK unwrap fallback:', unwErr);
+        }
+      }
+
       const now = Date.now();
-      const delayMs = vaultConfig.reset_delay_hours * 60 * 60 * 1000;
+      const delayMs = (vaultConfig.reset_delay_hours || 24) * 60 * 60 * 1000;
       const unlocksAt = now + delayMs;
 
       const updatedConfig = {
@@ -250,29 +329,39 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
         pending_reset: {
           active: true,
           requested_at: now,
-          unlocks_at: unlocksAt
+          unlocks_at: unlocksAt,
+          proposed_salt: proposedSaltBase64,
+          proposed_verifier: proposedVerifier,
+          proposed_wrapped_dek: proposedWrappedDek
         }
       };
 
       await saveVaultConfig(updatedConfig);
       setVaultConfig(updatedConfig);
       setShowResetModal(false);
-      setSuccessMsg(`सुरक्षा टाइमर शुरू हो गया। पासवर्ड ${vaultConfig.reset_delay_hours} घंटे बाद रीसेट हो सकेगा।`);
+      setResetNewPin('');
+      setResetNewPinConfirm('');
+      setAnswerAttempt('');
+
+      setSuccessMsg(`सुरक्षा टाइमर शुरू हो गया! आपका नया पासवर्ड ठीक ${vaultConfig.reset_delay_hours || 24} घंटे बाद अपने आप सक्रिय (Active) हो जाएगा।`);
 
     } catch (err) {
       setErrorMsg('रीसेट त्रुटि: ' + err.message);
+    } finally {
+      setLoading(false);
     }
   }
 
+  // Cancel Unauthorized Reset Attempt
   async function handleCancelReset() {
     try {
       const updatedConfig = {
         ...vaultConfig,
-        pending_reset: { active: false, requested_at: null, unlocks_at: null }
+        pending_reset: { active: false, requested_at: null, unlocks_at: null, proposed_salt: null, proposed_verifier: null, proposed_wrapped_dek: null }
       };
       await saveVaultConfig(updatedConfig);
       setVaultConfig(updatedConfig);
-      setSuccessMsg('पासवर्ड रीसेट की अनाधिकृत कोशिश को सफलतापूर्वक रद्द (Cancel) कर दिया गया!');
+      setSuccessMsg('पासवर्ड रीसेट की अनाधिकृत कोशिश को तुरंत रद्द (Cancel) कर दिया गया!');
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (err) {
       setErrorMsg('रद्द करने में त्रुटि: ' + err.message);
@@ -293,22 +382,25 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '24px 16px', backgroundColor: 'var(--bg-primary)' }}>
       
-      {/* PENDING RESET ALERT BANNER (The Intrusion Warning Shield) */}
+      {/* PENDING RESET INTRUSION ALERT BANNER */}
       {vaultConfig?.pending_reset?.active && (
         <div className="alert-banner-pulse" style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--danger-light)', border: '2px solid var(--danger)', borderRadius: '12px', padding: '16px', marginBottom: '24px' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-            <ShieldAlert size={26} color="var(--danger)" style={{ flexShrink: 0, marginTop: '2px' }} />
+            <ShieldAlert size={28} color="var(--danger)" style={{ flexShrink: 0, marginTop: '2px' }} />
             <div style={{ flex: 1 }}>
               <h4 style={{ color: 'var(--danger)', fontWeight: 700, fontSize: '0.95rem', marginBottom: '4px' }}>
-                ⚠️ सुरक्षा चेतावनी: पासवर्ड रीसेट सक्रिय है!
+                ⚠️ सुरक्षा चेतावनी: नया पासवर्ड टाइमर चल रहा है!
               </h4>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-primary)', marginBottom: '8px', lineHeight: 1.5 }}>
-                किसी ने सीक्रेट क्वेश्चन से पासवर्ड बदलने की रिक्वेस्ट डाली है। सुरक्षा नियमों के अनुसार यह रीसेट <strong>{resetCountdown || '24 घंटे'}</strong> बाद खुलेगा।
+              <p style={{ fontSize: '0.84rem', color: 'var(--text-primary)', marginBottom: '8px', lineHeight: 1.5 }}>
+                किसी ने सीक्रेट क्वेश्चन हल करके <strong>नया पासवर्ड</strong> सेट करने की रिक्वेस्ट डाली है। सुरक्षा नियमों के अनुसार यह नया पासवर्ड <strong>{resetCountdown || '24 घंटे'}</strong> बाद सक्रिय होगा।
+              </p>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                यदि यह आपने नहीं किया है, तो किसी ने आपका गुप्त प्रश्न जान लिया है। तुरंत नीचे दिया गया लाल बटन दबाकर इसे रद्द करें!
               </p>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                 <button 
                   onClick={handleCancelReset}
-                  style={{ backgroundColor: 'var(--danger)', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600 }}
+                  style={{ backgroundColor: 'var(--danger)', color: '#fff', border: 'none', padding: '7px 16px', borderRadius: '6px', fontSize: '0.82rem', fontWeight: 600 }}
                 >
                   तुरंत रद्द करें (Cancel Attempt)
                 </button>
@@ -318,7 +410,7 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
         </div>
       )}
 
-      {/* MAIN CONTAINER */}
+      {/* MAIN LOCK CONTAINER */}
       <div style={{ width: '100%', maxWidth: '420px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '32px 24px', boxShadow: 'var(--shadow-lg)' }}>
         
         {/* Brand Header */}
@@ -403,7 +495,7 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
         )}
 
         {/* ========================================== */}
-        {/* VIEW 2: INITIAL VAULT ONBOARDING SETUP */}
+        {/* VIEW 2: INITIAL VAULT SETUP */}
         {/* ========================================== */}
         {isNewVault && (
           <form onSubmit={handleCreateVault}>
@@ -438,7 +530,7 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
             {/* Secret Question Setup */}
             <div style={{ marginBottom: '16px' }}>
               <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                इमरजेंसी सीक्रेट क्वेश्चन (केवल पासवर्ड रिसेट के लिए)
+                इमरजेंसी सीक्रेट क्वेश्चन (केवल पासवर्ड रिकवरी हेतु)
               </label>
               <select
                 value={secretQuestion}
@@ -520,13 +612,13 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
       </div>
 
       {/* ========================================== */}
-      {/* MODAL: SECRET QUESTION RESET INITIATION */}
+      {/* MODAL: TIME-DELAYED RESET (SECRET QUESTION + NEW PASSWORD STAGING) */}
       {/* ========================================== */}
       {showResetModal && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', zIndex: 1000 }}>
-          <div style={{ width: '100%', maxWidth: '400px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', boxShadow: 'var(--shadow-lg)' }}>
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', zIndex: 1000 }}>
+          <div style={{ width: '100%', maxWidth: '420px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', boxShadow: 'var(--shadow-lg)' }}>
             
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Clock size={20} color="var(--warning)" />
                 टाइम-डिले पासवर्ड रिकवरी
@@ -539,26 +631,60 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
               </button>
             </div>
 
-            <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: 1.5 }}>
-              सीक्रेट क्वेश्चन का उत्तर देने पर पासवर्ड तुरंत नहीं बदलेगा। सुरक्षा नियमों के अनुसार <strong>{vaultConfig?.reset_delay_hours || 24} घंटे का चेतावनी टाइमर</strong> शुरू होगा।
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '14px', lineHeight: 1.5 }}>
+              सीक्रेट क्वेश्चन का उत्तर दें और अपना <strong>नया पासवर्ड</strong> दर्ज करें। यह नया पासवर्ड ठीक <strong>{vaultConfig?.reset_delay_hours || 24} घंटे बाद अपने आप लागू (Set)</strong> हो जाएगा।
             </p>
 
-            <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '12px', borderRadius: '8px', marginBottom: '16px' }}>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '2px' }}>आपका सुरक्षा प्रश्न:</span>
-              <p style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+            <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '10px 12px', borderRadius: '8px', marginBottom: '14px' }}>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>आपका सुरक्षा प्रश्न:</span>
+              <p style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-primary)' }}>
                 {vaultConfig?.secret_question}
               </p>
             </div>
 
             <form onSubmit={handleInitiateReset}>
-              <div style={{ marginBottom: '18px' }}>
+              {/* Secret Answer */}
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  सीक्रेट उत्तर
+                </label>
                 <input
                   type="text"
-                  placeholder="यहाँ अपना गुप्त उत्तर दर्ज करें"
+                  placeholder="गुप्त सवाल का उत्तर"
                   value={answerAttempt}
                   onChange={(e) => setAnswerAttempt(e.target.value)}
                   required
-                  style={{ width: '100%', padding: '10px 12px', fontSize: '0.9rem' }}
+                  style={{ width: '100%', padding: '9px 12px', fontSize: '0.88rem' }}
+                />
+              </div>
+
+              {/* Proposed New Password */}
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  आगामी नया पिन / पासवर्ड (New Password)
+                </label>
+                <input
+                  type="password"
+                  placeholder="कम से कम 4 अक्षर"
+                  value={resetNewPin}
+                  onChange={(e) => setResetNewPin(e.target.value)}
+                  required
+                  style={{ width: '100%', padding: '9px 12px', fontSize: '0.88rem' }}
+                />
+              </div>
+
+              {/* Confirm New Password */}
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  नए पिन की दोबारा पुष्टि करें
+                </label>
+                <input
+                  type="password"
+                  placeholder="नया पिन दोबारा दर्ज करें"
+                  value={resetNewPinConfirm}
+                  onChange={(e) => setResetNewPinConfirm(e.target.value)}
+                  required
+                  style={{ width: '100%', padding: '9px 12px', fontSize: '0.88rem' }}
                 />
               </div>
 
@@ -572,10 +698,11 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
                 </button>
                 <button
                   type="submit"
+                  disabled={loading}
                   className="primary-btn"
                   style={{ flex: 1, padding: '10px', fontSize: '0.85rem' }}
                 >
-                  टाइमर शुरू करें
+                  {loading ? 'प्रोसेसिंग...' : 'टाइमर शुरू करें'}
                 </button>
               </div>
             </form>

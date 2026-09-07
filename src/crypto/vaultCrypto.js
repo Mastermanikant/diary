@@ -87,6 +87,70 @@ export async function deriveKeyFromPassphrase(passphrase, saltBytes) {
 }
 
 /**
+ * Derive Recovery Key from Secret Question Answer and Salt
+ */
+export async function deriveKeyFromSecretAnswer(answerText, saltBytes) {
+  const normalized = answerText.trim().toLowerCase();
+  return await deriveKeyFromPassphrase(normalized, saltBytes);
+}
+
+/**
+ * Import raw 32 bytes into an AES-GCM CryptoKey
+ */
+export async function importRawAesKey(rawBytes) {
+  return await window.crypto.subtle.importKey(
+    'raw',
+    rawBytes,
+    { name: 'AES-GCM', length: AES_KEY_LENGTH },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+/**
+ * Wrap (encrypt) a raw 32-byte DEK with a wrapping key
+ */
+export async function wrapDek(wrappingKey, rawDekBytes) {
+  const nonce = generateRandomBytes(NONCE_BYTE_LENGTH);
+  const ciphertextBuffer = await window.crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv: nonce,
+      tagLength: 128,
+    },
+    wrappingKey,
+    rawDekBytes
+  );
+
+  return {
+    nonce: bufferToBase64(nonce.buffer),
+    ciphertext: bufferToBase64(ciphertextBuffer),
+  };
+}
+
+/**
+ * Unwrap (decrypt) a wrapped DEK back to CryptoKey
+ */
+export async function unwrapDek(wrappingKey, wrappedBlob) {
+  const nonce = new Uint8Array(base64ToBuffer(wrappedBlob.nonce));
+  const ciphertext = base64ToBuffer(wrappedBlob.ciphertext);
+
+  const decryptedBuffer = await window.crypto.subtle.decrypt(
+    {
+      name: 'AES-GCM',
+      iv: nonce,
+      tagLength: 128,
+    },
+    wrappingKey,
+    ciphertext
+  );
+
+  const rawBytes = new Uint8Array(decryptedBuffer);
+  const cryptoKey = await importRawAesKey(rawBytes);
+  return { cryptoKey, rawBytes };
+}
+
+/**
  * Encrypt arbitrary JavaScript Object or String with AES-256-GCM
  */
 export async function encryptPayload(key, plaintextData) {
@@ -191,7 +255,7 @@ export async function restoreEncryptedBackupFile(passphrase, backupObject) {
 }
 
 /**
- * Hash secret answer for emergency time-delayed reset
+ * Hash secret answer for emergency time-delayed reset verification
  */
 export async function hashSecretAnswer(answerText, saltBytes) {
   const enc = new TextEncoder();
