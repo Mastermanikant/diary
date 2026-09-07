@@ -8,12 +8,14 @@ import {
   Clock, 
   Sparkles, 
   ClipboardPaste, 
-  AlertTriangle,
-  Smartphone,
-  CheckCircle2,
-  XCircle,
+  AlertTriangle, 
+  Smartphone, 
+  CheckCircle2, 
+  XCircle, 
   HelpCircle,
-  Key
+  Key,
+  ShieldCheck,
+  Hash
 } from 'lucide-react';
 import { 
   deriveKeyFromPassphrase, 
@@ -27,6 +29,7 @@ import {
   wrapDek,
   unwrapDek
 } from '../crypto/vaultCrypto';
+import { generateFrankPassDeterministicKey } from '../crypto/frankpassSdk';
 import { getVaultConfig, saveVaultConfig } from '../storage/localVault';
 
 export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme }) {
@@ -35,14 +38,21 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  // Active Unlock Method Tab: 'pin' | 'frankpass'
+  const [unlockTab, setUnlockTab] = useState('pin');
+
   // Unlock credentials state
   const [enteredPin, setEnteredPin] = useState('');
   const [vaultConfig, setVaultConfig] = useState(null);
 
+  // FrankPass Direct Mode State
+  const [frankPassSecretKey, setFrankPassSecretKey] = useState('');
+  const [frankPassCounter, setFrankPassCounter] = useState(1);
+
   // New Vault setup state
   const [setupPin, setSetupPin] = useState('');
   const [setupPinConfirm, setSetupPinConfirm] = useState('');
-  const [unlockMethod, setUnlockMethod] = useState('pin');
+  const [setupMethodTab, setSetupMethodTab] = useState('pin'); // 'pin' | 'frankpass'
   const [secretQuestion, setSecretQuestion] = useState('मेरी पहली पसंदीदा पुस्तक या शिक्षक का नाम?');
   const [customQuestion, setCustomQuestion] = useState('');
   const [secretAnswer, setSecretAnswer] = useState('');
@@ -73,7 +83,6 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
       const remainingMs = unlocksAt - now;
 
       if (remainingMs <= 0) {
-        // TIME DELAY HAS EXPIRED! Automatically promote the staged new password!
         clearInterval(interval);
         try {
           const promotedConfig = {
@@ -113,7 +122,6 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
         else if (/Windows/i.test(userAgent)) setDeviceName('Windows कंप्यूटर');
         else setDeviceName('व्यक्तिगत डिवाइस');
       } else {
-        // Check if delay expired while app was closed
         if (config.pending_reset?.active && Date.now() >= config.pending_reset.unlocks_at) {
           const promotedConfig = {
             ...config,
@@ -139,20 +147,32 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
   }
 
   // ==========================================
-  // INITIAL VAULT SETUP
+  // INITIAL VAULT SETUP (PIN OR FRANKPASS)
   // ==========================================
   async function handleCreateVault(e) {
     e.preventDefault();
     setErrorMsg('');
 
-    if (setupPin.length < 4) {
-      setErrorMsg('पिन या पासफ़्रेज़ कम से कम 4 अक्षरों का होना चाहिए');
-      return;
+    let effectivePassphrase = setupPin;
+
+    if (setupMethodTab === 'frankpass') {
+      if (!frankPassSecretKey.trim()) {
+        setErrorMsg('कृपया अपनी FrankPass सीक्रेट की दर्ज करें');
+        return;
+      }
+      // Generate deterministic key via FrankPass SDK
+      effectivePassphrase = await generateFrankPassDeterministicKey(frankPassSecretKey, frankPassCounter);
+    } else {
+      if (setupPin.length < 4) {
+        setErrorMsg('पिन या पासफ़्रेज़ कम से कम 4 अक्षरों का होना चाहिए');
+        return;
+      }
+      if (setupPin !== setupPinConfirm) {
+        setErrorMsg('दोनों पिन आपस में मेल नहीं खा रहे हैं');
+        return;
+      }
     }
-    if (setupPin !== setupPinConfirm) {
-      setErrorMsg('दोनों पिन आपस में मेल नहीं खा रहे हैं');
-      return;
-    }
+
     if (!secretAnswer.trim()) {
       setErrorMsg('कृपया सीक्रेट क्वेश्चन का उत्तर अवश्य दर्ज करें');
       return;
@@ -163,23 +183,13 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
       const saltBytes = generateRandomBytes(16);
       const saltBase64 = bufferToBase64(saltBytes.buffer);
 
-      // Generate a random 32-byte Data Encryption Key (DEK)
       const rawDekBytes = generateRandomBytes(32);
-
-      // Derive Master Key from user PIN
-      const masterKey = await deriveKeyFromPassphrase(setupPin, saltBytes);
-
-      // Derive Recovery Key from Secret Answer
+      const masterKey = await deriveKeyFromPassphrase(effectivePassphrase, saltBytes);
       const recoveryKey = await deriveKeyFromSecretAnswer(secretAnswer, saltBytes);
 
-      // Wrap DEK with MasterKey and with RecoveryKey
       const wrappedDek = await wrapDek(masterKey, rawDekBytes);
       const recoveryWrappedDek = await wrapDek(recoveryKey, rawDekBytes);
-
-      // Create verifier blob to test valid decryption in the future
       const verifierBlob = await encryptPayload(masterKey, 'FRANKDIARY_VALID_KEY_TOKEN');
-
-      // Hash secret answer for quick verification check
       const answerHash = await hashSecretAnswer(secretAnswer, saltBytes);
 
       const finalQuestion = customQuestion.trim() ? customQuestion.trim() : secretQuestion;
@@ -190,7 +200,7 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
         verifier_blob: verifierBlob,
         wrapped_dek: wrappedDek,
         recovery_wrapped_dek: recoveryWrappedDek,
-        unlock_method: unlockMethod,
+        unlock_method: setupMethodTab,
         secret_question: finalQuestion,
         secret_answer_hash: answerHash,
         reset_delay_hours: parseInt(resetDelayHours, 10) || 24,
@@ -206,7 +216,7 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
         onUnlockSuccess({
           masterKey,
           config: newConfig,
-          passphrase: setupPin
+          passphrase: effectivePassphrase
         });
       }, 500);
 
@@ -218,7 +228,7 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
   }
 
   // ==========================================
-  // UNLOCK EXISTING VAULT
+  // UNLOCK EXISTING VAULT (STANDARD PIN)
   // ==========================================
   async function handleUnlock(e) {
     if (e) e.preventDefault();
@@ -234,10 +244,8 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
       const saltBytes = new Uint8Array(base64ToBuffer(vaultConfig.salt));
       const masterKey = await deriveKeyFromPassphrase(enteredPin, saltBytes);
 
-      // Verify key against verifier_blob
       const verified = await decryptPayload(masterKey, vaultConfig.verifier_blob);
       if (verified === 'FRANKDIARY_VALID_KEY_TOKEN') {
-        // Successful unlock
         onUnlockSuccess({
           masterKey,
           config: vaultConfig,
@@ -253,7 +261,44 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
     }
   }
 
-  // FrankPass Paste Helper
+  // ==========================================
+  // UNLOCK VIA FRANKPASS DIRECT SDK (ZERO CLIPBOARD)
+  // ==========================================
+  async function handleUnlockWithFrankPass(e) {
+    e.preventDefault();
+    setErrorMsg('');
+
+    if (!frankPassSecretKey.trim()) {
+      setErrorMsg('कृपया अपनी FrankPass सीक्रेट की दर्ज करें');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      // Derive 64-char deterministic key directly in RAM
+      const deterministicKey = await generateFrankPassDeterministicKey(frankPassSecretKey, frankPassCounter);
+
+      const saltBytes = new Uint8Array(base64ToBuffer(vaultConfig.salt));
+      const masterKey = await deriveKeyFromPassphrase(deterministicKey, saltBytes);
+
+      const verified = await decryptPayload(masterKey, vaultConfig.verifier_blob);
+      if (verified === 'FRANKDIARY_VALID_KEY_TOKEN') {
+        onUnlockSuccess({
+          masterKey,
+          config: vaultConfig,
+          passphrase: deterministicKey
+        });
+      } else {
+        setErrorMsg('अमान्य FrankPass सीक्रेट की या गलत पासवर्ड नंबर (Counter)।');
+      }
+    } catch {
+      setErrorMsg('FrankPass अनलॉक विफल: अमान्य की या काउंटर।');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // FrankPass Paste Helper (Fallback)
   async function handlePasteFrankPass() {
     try {
       const text = await navigator.clipboard.readText();
@@ -265,7 +310,7 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
         setErrorMsg('क्लिपबोर्ड खाली है। FrankPass से की कॉपी करें।');
       }
     } catch {
-      setErrorMsg('क्लिपबोर्ड एक्सेस की अनुमति नहीं मिली। कृपया हाथ से पेस्ट करें।');
+      setErrorMsg('क्लिपबोर्ड एक्सेस की अनुमति नहीं मिली। कृपया हाथ से टाइप करें।');
     }
   }
 
@@ -300,16 +345,12 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
         return;
       }
 
-      // Secret answer verified!
-      // Generate proposed new salt and derive proposed new master key
       const proposedSaltBytes = generateRandomBytes(16);
       const proposedSaltBase64 = bufferToBase64(proposedSaltBytes.buffer);
       const proposedMasterKey = await deriveKeyFromPassphrase(resetNewPin, proposedSaltBytes);
       const proposedVerifier = await encryptPayload(proposedMasterKey, 'FRANKDIARY_VALID_KEY_TOKEN');
 
       let proposedWrappedDek = null;
-
-      // If vault has recovery_wrapped_dek, unwrap DEK and re-wrap with proposedMasterKey
       if (vaultConfig.recovery_wrapped_dek) {
         try {
           const recoveryKey = await deriveKeyFromSecretAnswer(answerAttempt, saltBytes);
@@ -411,10 +452,10 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
       )}
 
       {/* MAIN LOCK CONTAINER */}
-      <div style={{ width: '100%', maxWidth: '420px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '32px 24px', boxShadow: 'var(--shadow-lg)' }}>
+      <div style={{ width: '100%', maxWidth: '430px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '32px 24px', boxShadow: 'var(--shadow-lg)' }}>
         
         {/* Brand Header */}
-        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+        <div style={{ textAlign: 'center', marginBottom: '24px' }}>
           <div style={{ width: '56px', height: '56px', borderRadius: '16px', backgroundColor: 'var(--accent-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
             <Lock size={28} color="var(--accent-primary)" />
           </div>
@@ -444,175 +485,307 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
         {/* VIEW 1: UNLOCK EXISTING VAULT */}
         {/* ========================================== */}
         {!isNewVault && (
-          <form onSubmit={handleUnlock}>
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                मास्टर पिन या पासफ़्रेज़ दर्ज करें
-              </label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  type="password"
-                  value={enteredPin}
-                  onChange={(e) => setEnteredPin(e.target.value)}
-                  placeholder="••••••••"
-                  autoFocus
-                  style={{ width: '100%', padding: '12px 14px', fontSize: '1.1rem', letterSpacing: '0.2em' }}
-                />
-              </div>
-            </div>
-
-            {/* FrankPass Paste Quick Button */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '22px' }}>
+          <div>
+            {/* Mode Switch Tabs: Standard PIN vs FrankPass Direct SDK */}
+            <div style={{ display: 'flex', backgroundColor: 'var(--bg-elevated)', padding: '3px', borderRadius: '10px', marginBottom: '20px' }}>
               <button
                 type="button"
-                onClick={handlePasteFrankPass}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--accent-primary)', backgroundColor: 'transparent', border: 'none', padding: '4px 0' }}
+                onClick={() => { setUnlockTab('pin'); setErrorMsg(''); }}
+                style={{ flex: 1, padding: '8px', fontSize: '0.82rem', fontWeight: 600, border: 'none', borderRadius: '8px', backgroundColor: unlockTab === 'pin' ? 'var(--bg-card)' : 'transparent', color: unlockTab === 'pin' ? 'var(--accent-primary)' : 'var(--text-muted)', boxShadow: unlockTab === 'pin' ? 'var(--shadow-sm)' : 'none' }}
               >
-                <ClipboardPaste size={14} />
-                FrankPass से पेस्ट करें
+                मास्टर पिन
               </button>
-
               <button
                 type="button"
-                onClick={() => setShowResetModal(true)}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem', color: 'var(--text-muted)', backgroundColor: 'transparent', border: 'none', padding: '4px 0' }}
+                onClick={() => { setUnlockTab('frankpass'); setErrorMsg(''); }}
+                style={{ flex: 1, padding: '8px', fontSize: '0.82rem', fontWeight: 600, border: 'none', borderRadius: '8px', backgroundColor: unlockTab === 'frankpass' ? 'var(--bg-card)' : 'transparent', color: unlockTab === 'frankpass' ? 'var(--accent-primary)' : 'var(--text-muted)', boxShadow: unlockTab === 'frankpass' ? 'var(--shadow-sm)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
               >
-                <HelpCircle size={14} />
-                पिन भूल गए?
+                <ShieldCheck size={14} />
+                FrankPass डायरेक्ट
               </button>
             </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="primary-btn"
-              style={{ width: '100%', padding: '13px', fontSize: '0.98rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-            >
-              <Unlock size={18} />
-              {loading ? 'डिक्रिप्ट हो रहा है...' : 'डायरी अनलॉक करें'}
-            </button>
-          </form>
+            {/* TAB 1A: STANDARD PIN UNLOCK */}
+            {unlockTab === 'pin' && (
+              <form onSubmit={handleUnlock}>
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                    मास्टर पिन या पासफ़्रेज़ दर्ज करें
+                  </label>
+                  <input
+                    type="password"
+                    value={enteredPin}
+                    onChange={(e) => setEnteredPin(e.target.value)}
+                    placeholder="••••••••"
+                    autoFocus
+                    style={{ width: '100%', padding: '12px 14px', fontSize: '1.1rem', letterSpacing: '0.2em' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                  <button
+                    type="button"
+                    onClick={handlePasteFrankPass}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--accent-primary)', backgroundColor: 'transparent', border: 'none', padding: '4px 0' }}
+                  >
+                    <ClipboardPaste size={14} />
+                    क्लिपबोर्ड से पेस्ट करें
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowResetModal(true)}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem', color: 'var(--text-muted)', backgroundColor: 'transparent', border: 'none', padding: '4px 0' }}
+                  >
+                    <HelpCircle size={14} />
+                    पिन भूल गए?
+                  </button>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="primary-btn"
+                  style={{ width: '100%', padding: '13px', fontSize: '0.98rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                >
+                  <Unlock size={18} />
+                  {loading ? 'डिक्रिप्ट हो रहा है...' : 'डायरी अनलॉक करें'}
+                </button>
+              </form>
+            )}
+
+            {/* TAB 1B: FRANKPASS NATIVE IN-APP SDK UNLOCK (ZERO CLIPBOARD) */}
+            {unlockTab === 'frankpass' && (
+              <form onSubmit={handleUnlockWithFrankPass}>
+                <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '10px 12px', borderRadius: '8px', marginBottom: '14px', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  🔒 प्लेटफॉर्म: <strong>dairy.frankbase.com</strong> (Pre-Set)
+                </div>
+
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                    FrankPass मास्टर सीक्रेट की (Secret Key)
+                  </label>
+                  <input
+                    type="password"
+                    value={frankPassSecretKey}
+                    onChange={(e) => setFrankPassSecretKey(e.target.value)}
+                    placeholder="अपनी FrankPass सीक्रेट की दर्ज करें"
+                    autoFocus
+                    required
+                    style={{ width: '100%', padding: '11px 12px', fontSize: '0.95rem' }}
+                  />
+                </div>
+
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                    पासवर्ड नंबर (Counter / Password #)
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <input
+                      type="number"
+                      min={1}
+                      max={99}
+                      value={frankPassCounter}
+                      onChange={(e) => setFrankPassCounter(parseInt(e.target.value, 10) || 1)}
+                      style={{ width: '80px', padding: '10px 12px', fontSize: '0.95rem', textAlign: 'center' }}
+                    />
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                      (डिफ़ॉल्ट 1 है, जब तक आपने FrankPass में अन्य नंबर न चुना हो)
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="primary-btn"
+                  style={{ width: '100%', padding: '13px', fontSize: '0.95rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                >
+                  <ShieldCheck size={18} />
+                  {loading ? 'की जनरेट होकर अनलॉक हो रहा है...' : 'FrankPass से तुरंत अनलॉक करें'}
+                </button>
+              </form>
+            )}
+
+          </div>
         )}
 
         {/* ========================================== */}
         {/* VIEW 2: INITIAL VAULT SETUP */}
         {/* ========================================== */}
         {isNewVault && (
-          <form onSubmit={handleCreateVault}>
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                मास्टर पिन / पासफ़्रेज़ बनाएं
-              </label>
-              <input
-                type="password"
-                value={setupPin}
-                onChange={(e) => setSetupPin(e.target.value)}
-                placeholder="कम से कम 4 अक्षर या अंक"
-                required
-                style={{ width: '100%', padding: '10px 12px', fontSize: '0.95rem' }}
-              />
-            </div>
-
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                पिन की दोबारा पुष्टि करें
-              </label>
-              <input
-                type="password"
-                value={setupPinConfirm}
-                onChange={(e) => setSetupPinConfirm(e.target.value)}
-                placeholder="पिन दोबारा दर्ज करें"
-                required
-                style={{ width: '100%', padding: '10px 12px', fontSize: '0.95rem' }}
-              />
-            </div>
-
-            {/* Secret Question Setup */}
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                इमरजेंसी सीक्रेट क्वेश्चन (केवल पासवर्ड रिकवरी हेतु)
-              </label>
-              <select
-                value={secretQuestion}
-                onChange={(e) => setSecretQuestion(e.target.value)}
-                style={{ width: '100%', padding: '10px 12px', fontSize: '0.85rem', marginBottom: '8px' }}
+          <div>
+            {/* Setup Mode Tabs */}
+            <div style={{ display: 'flex', backgroundColor: 'var(--bg-elevated)', padding: '3px', borderRadius: '10px', marginBottom: '18px' }}>
+              <button
+                type="button"
+                onClick={() => setSetupMethodTab('pin')}
+                style={{ flex: 1, padding: '7px', fontSize: '0.8rem', fontWeight: 600, border: 'none', borderRadius: '7px', backgroundColor: setupMethodTab === 'pin' ? 'var(--bg-card)' : 'transparent', color: setupMethodTab === 'pin' ? 'var(--accent-primary)' : 'var(--text-muted)' }}
               >
-                <option value="मेरी पहली पसंदीदा पुस्तक या शिक्षक का नाम?">मेरी पहली पसंदीदा पुस्तक या शिक्षक का नाम?</option>
-                <option value="मेरा पहला मोबाइल फोन कौन सा था?">मेरा पहला मोबाइल फोन कौन सा था?</option>
-                <option value="मेरा पसंदीदा बचपन का गुप्त शहर या गांव?">मेरा पसंदीदा बचपन का गुप्त शहर या गांव?</option>
-                <option value="custom">-- अपना खुद का सवाल लिखें --</option>
-              </select>
+                साधारण पिन बनाएं
+              </button>
+              <button
+                type="button"
+                onClick={() => setSetupMethodTab('frankpass')}
+                style={{ flex: 1, padding: '7px', fontSize: '0.8rem', fontWeight: 600, border: 'none', borderRadius: '7px', backgroundColor: setupMethodTab === 'frankpass' ? 'var(--bg-card)' : 'transparent', color: setupMethodTab === 'frankpass' ? 'var(--accent-primary)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+              >
+                <ShieldCheck size={13} />
+                FrankPass की से लिंक करें
+              </button>
+            </div>
 
-              {secretQuestion === 'custom' && (
-                <input
-                  type="text"
-                  placeholder="अपना गुप्त सवाल यहाँ लिखें"
-                  value={customQuestion}
-                  onChange={(e) => setCustomQuestion(e.target.value)}
-                  style={{ width: '100%', padding: '8px 12px', fontSize: '0.85rem', marginBottom: '8px' }}
-                />
+            <form onSubmit={handleCreateVault}>
+              {setupMethodTab === 'pin' && (
+                <>
+                  <div style={{ marginBottom: '14px' }}>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                      मास्टर पिन / पासफ़्रेज़ बनाएं
+                    </label>
+                    <input
+                      type="password"
+                      value={setupPin}
+                      onChange={(e) => setSetupPin(e.target.value)}
+                      placeholder="कम से कम 4 अक्षर या अंक"
+                      required
+                      style={{ width: '100%', padding: '10px 12px', fontSize: '0.92rem' }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: '14px' }}>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                      पिन की दोबारा पुष्टि करें
+                    </label>
+                    <input
+                      type="password"
+                      value={setupPinConfirm}
+                      onChange={(e) => setSetupPinConfirm(e.target.value)}
+                      placeholder="पिन दोबारा दर्ज करें"
+                      required
+                      style={{ width: '100%', padding: '10px 12px', fontSize: '0.92rem' }}
+                    />
+                  </div>
+                </>
               )}
 
-              <input
-                type="text"
-                placeholder="सीक्रेट उत्तर (याद रखें, केस-सेंसिटिव नहीं है)"
-                value={secretAnswer}
-                onChange={(e) => setSecretAnswer(e.target.value)}
-                required
-                style={{ width: '100%', padding: '10px 12px', fontSize: '0.85rem' }}
-              />
-            </div>
+              {setupMethodTab === 'frankpass' && (
+                <>
+                  <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '8px 10px', borderRadius: '8px', marginBottom: '12px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    🔒 प्लेटफॉर्म: <strong>dairy.frankbase.com</strong> (Pre-Set)
+                  </div>
 
-            {/* Reset Delay Config */}
-            <div style={{ marginBottom: '18px' }}>
-              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                सुरक्षा टाइम-डिले (Time-Delay Protection)
-              </label>
-              <select
-                value={resetDelayHours}
-                onChange={(e) => setResetDelayHours(e.target.value)}
-                style={{ width: '100%', padding: '10px 12px', fontSize: '0.85rem' }}
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                      अपनी FrankPass मास्टर सीक्रेट की दर्ज करें
+                    </label>
+                    <input
+                      type="password"
+                      value={frankPassSecretKey}
+                      onChange={(e) => setFrankPassSecretKey(e.target.value)}
+                      placeholder="FrankPass Secret Key"
+                      required
+                      style={{ width: '100%', padding: '10px 12px', fontSize: '0.9rem' }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: '14px' }}>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                      पासवर्ड नंबर (Counter #)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={frankPassCounter}
+                      onChange={(e) => setFrankPassCounter(parseInt(e.target.value, 10) || 1)}
+                      style={{ width: '80px', padding: '8px 12px', fontSize: '0.9rem', textAlign: 'center' }}
+                    />
+                  </div>
+                </>
+              )}
+
+              {/* Secret Question Setup */}
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  इमरजेंसी सीक्रेट प्रश्न (केवल पासवर्ड रिकवरी हेतु)
+                </label>
+                <select
+                  value={secretQuestion}
+                  onChange={(e) => setSecretQuestion(e.target.value)}
+                  style={{ width: '100%', padding: '9px 10px', fontSize: '0.82rem', marginBottom: '6px' }}
+                >
+                  <option value="मेरी पहली पसंदीदा पुस्तक या शिक्षक का नाम?">मेरी पहली पसंदीदा पुस्तक या शिक्षक का नाम?</option>
+                  <option value="मेरा पहला मोबाइल फोन कौन सा था?">मेरा पहला मोबाइल फोन कौन सा था?</option>
+                  <option value="मेरा पसंदीदा बचपन का गुप्त शहर या गांव?">मेरा पसंदीदा बचपन का गुप्त शहर या गांव?</option>
+                  <option value="custom">-- अपना खुद का सवाल लिखें --</option>
+                </select>
+
+                {secretQuestion === 'custom' && (
+                  <input
+                    type="text"
+                    placeholder="अपना गुप्त सवाल यहाँ लिखें"
+                    value={customQuestion}
+                    onChange={(e) => setCustomQuestion(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: '0.82rem', marginBottom: '6px' }}
+                  />
+                )}
+
+                <input
+                  type="text"
+                  placeholder="सीक्रेट उत्तर"
+                  value={secretAnswer}
+                  onChange={(e) => setSecretAnswer(e.target.value)}
+                  required
+                  style={{ width: '100%', padding: '9px 10px', fontSize: '0.82rem' }}
+                />
+              </div>
+
+              {/* Reset Delay Config */}
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  सुरक्षा टाइम-डिले (Time-Delay Protection)
+                </label>
+                <select
+                  value={resetDelayHours}
+                  onChange={(e) => setResetDelayHours(e.target.value)}
+                  style={{ width: '100%', padding: '9px 10px', fontSize: '0.82rem' }}
+                >
+                  <option value={12}>12 घंटे बाद रिसेट हो (त्वरित)</option>
+                  <option value={24}>24 घंटे बाद रिसेट हो (सुझाया गया)</option>
+                  <option value={48}>48 घंटे बाद रिसेट हो (अत्यधिक सुरक्षित)</option>
+                  <option value={72}>72 घंटे बाद रिसेट हो (कठोर सुरक्षा)</option>
+                </select>
+              </div>
+
+              {/* Device Name */}
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  इस डिवाइस का नाम
+                </label>
+                <input
+                  type="text"
+                  value={deviceName}
+                  onChange={(e) => setDeviceName(e.target.value)}
+                  placeholder="उदा. मणिकान्त का फोन"
+                  style={{ width: '100%', padding: '9px 10px', fontSize: '0.82rem' }}
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="primary-btn"
+                style={{ width: '100%', padding: '12px', fontSize: '0.95rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
               >
-                <option value={12}>12 घंटे बाद रिसेट हो (त्वरित)</option>
-                <option value={24}>24 घंटे बाद रिसेट हो (सुझाया गया)</option>
-                <option value={48}>48 घंटे बाद रिसेट हो (अत्यधिक सुरक्षित)</option>
-                <option value={72}>72 घंटे बाद रिसेट हो (कठोर सुरक्षा)</option>
-              </select>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                अगर कोई सीक्रेट क्वेश्चन हल भी कर लेगा, तो इतने समय तक ऐप पर चेतावनी टाइमर चलेगा ताकि आप उसे रद्द कर सकें।
-              </p>
-            </div>
-
-            {/* Device Name */}
-            <div style={{ marginBottom: '24px' }}>
-              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                इस डिवाइस का नाम
-              </label>
-              <input
-                type="text"
-                value={deviceName}
-                onChange={(e) => setDeviceName(e.target.value)}
-                placeholder="उदा. मणिकान्त का फोन"
-                style={{ width: '100%', padding: '10px 12px', fontSize: '0.85rem' }}
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="primary-btn"
-              style={{ width: '100%', padding: '12px', fontSize: '0.98rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-            >
-              <Sparkles size={18} />
-              {loading ? 'वॉल्ट बन रहा है...' : 'सुरक्षित वॉल्ट तैयार करें'}
-            </button>
-          </form>
+                <Sparkles size={18} />
+                {loading ? 'वॉल्ट बन रहा है...' : 'सुरक्षित वॉल्ट तैयार करें'}
+              </button>
+            </form>
+          </div>
         )}
 
       </div>
 
       {/* ========================================== */}
-      {/* MODAL: TIME-DELAYED RESET (SECRET QUESTION + NEW PASSWORD STAGING) */}
+      {/* MODAL: TIME-DELAYED RESET */}
       {/* ========================================== */}
       {showResetModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', zIndex: 1000 }}>
@@ -632,7 +805,7 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
             </div>
 
             <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '14px', lineHeight: 1.5 }}>
-              सीक्रेट क्वेश्चन का उत्तर दें और अपना <strong>नया पासवर्ड</strong> दर्ज करें। यह नया पासवर्ड ठीक <strong>{vaultConfig?.reset_delay_hours || 24} घंटे बाद अपने आप लागू (Set)</strong> हो जाएगा।
+              सीक्रेट उत्तर दें और आगामी <strong>नया पासवर्ड</strong> दर्ज करें। यह ठीक <strong>{vaultConfig?.reset_delay_hours || 24} घंटे बाद स्वतः लागू</strong> होगा।
             </p>
 
             <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '10px 12px', borderRadius: '8px', marginBottom: '14px' }}>
@@ -643,7 +816,6 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
             </div>
 
             <form onSubmit={handleInitiateReset}>
-              {/* Secret Answer */}
               <div style={{ marginBottom: '12px' }}>
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
                   सीक्रेट उत्तर
@@ -658,10 +830,9 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
                 />
               </div>
 
-              {/* Proposed New Password */}
               <div style={{ marginBottom: '12px' }}>
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                  आगामी नया पिन / पासवर्ड (New Password)
+                  आगामी नया पिन / पासवर्ड
                 </label>
                 <input
                   type="password"
@@ -673,7 +844,6 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
                 />
               </div>
 
-              {/* Confirm New Password */}
               <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
                   नए पिन की दोबारा पुष्टि करें
