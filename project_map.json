@@ -6,23 +6,32 @@
     "od.frankbase.com",
     "ood.frankbase.com"
   ],
+  "github_repository": "https://github.com/Mastermanikant/diary.git",
   "founder": "Master Manikant Yadav",
   "organization": "FrankBase Ecosystem",
   "canonical_path": "D:\\01_Websites_and_Content\\MMY_Website_Project\\22_ood.frankbase.com",
-  "status": "PHASE_0_RESEARCH_AND_THREAT_MODEL_COMPLETED",
+  "status": "PHASE_1_OFFLINE_PWA_COMPLETE_AND_PUSHED",
   "created_at": "2026-09-07T10:19:00+05:30",
-  "last_updated": "2026-09-07T10:25:00+05:30",
+  "last_updated": "2026-09-07T11:49:00+05:30",
   "core_philosophy": "Your data belongs to you. The server stores ciphertext, not readable personal information.",
-  "modes": [
-    "Mode 1: Fully Offline Diary (Air-gapped, zero-cloud, SQLite WASM / OPFS)",
-    "Mode 2: Portable Encrypted Backups (.fbe container format)",
-    "Mode 3: Optional Zero-Knowledge Cloud Sync (Cloudflare Workers + D1 + R2)"
+  "features_implemented": [
+    "100% Offline-First PWA (Service Worker + Manifest)",
+    "Client-Side Authenticated Encryption (WebCrypto AES-256-GCM + PBKDF2-SHA256)",
+    "Multi-Option Unlock (PIN, Biometrics, Screen Lock, FrankPass 1-Click Paste)",
+    "Time-Delayed Secret Question Reset with Active Intrusion Warning Countdown Banner",
+    "Physical Diary Mode (Dotted strike-through, thin font, and collapsible shrink drawers)",
+    "Device-Name Signature Provenance Tracking (Manikant Phone, Office PC)",
+    "On-Device Full-Text Search and Mood/Tag/Favorite Filtering",
+    "Authenticated Encrypted Backup (.fbe Container) Export and Restore",
+    "Unencrypted Plaintext JSON Anti-Lockin Export",
+    "Full Day/Night Theme adhering to WCAG 2.1 AA and Rule 11",
+    "Cloudflare Pages Security Headers (_headers)"
   ],
-  "cryptography_spec": {
-    "kdf": "Argon2id (RFC 9106, m=64MB, t=3, p=4)",
-    "aead_ciphers": ["AES-256-GCM (WebCrypto)", "XChaCha20-Poly1305 (@noble/ciphers)"],
-    "key_hierarchy": "Envelope Encryption (Master Key -> KEK -> Wrapped DEK)",
-    "recovery": "24-Word BIP-39 Recovery Phrase (Zero Company Backdoor)"
+  "build_status": {
+    "engine": "React 18 + Vite 5",
+    "bundle_size": "215 kB JS (64 kB gzip), 3.89 kB CSS",
+    "build_time": "5.31s",
+    "test_errors": 0
   },
   "research_deliverables_count": 26,
   "research_directory": "research/"
