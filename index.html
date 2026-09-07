@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="hi" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>FrankDiary | Zero-Knowledge Offline Encrypted Diary</title>
+    <meta name="description" content="Privacy-first, offline-first personal diary and encrypted storage system by FrankBase. End-to-end encrypted with zero server access." />
+    
+    <!-- PWA & Mobile Web App Meta -->
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="FrankDiary" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+
+    <!-- SEO & Indexation Governance (Rule 5: Noindex for private app) -->
+    <meta name="robots" content="noindex, follow" />
+
+    <!-- Typography: Inter + Noto Sans Devanagari for clean English & Hindi -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+    <script>
+      // Service Worker Registration for 100% Offline Capability
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch((err) => {
+            console.warn('ServiceWorker registration error:', err);
+          });
+        });
+      }
+    </script>
+  </body>
+</html>

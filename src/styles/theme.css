@@ -1,0 +1,201 @@
+/* FrankDiary Semantic CSS Variables & WCAG 2.1 AA Dual Theme */
+
+:root,
+[data-theme="dark"] {
+  --bg-primary: #090d16;
+  --bg-secondary: #0f172a;
+  --bg-card: #162033;
+  --bg-elevated: #1e293b;
+  --bg-input: #0b1120;
+  --bg-hover: #233149;
+  
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  
+  --border-color: #334155;
+  --border-subtle: #1e293b;
+  --border-focus: #38bdf8;
+
+  --accent-primary: #38bdf8;
+  --accent-hover: #0ea5e9;
+  --accent-light: rgba(56, 189, 248, 0.15);
+  
+  --success: #22c55e;
+  --success-light: rgba(34, 197, 94, 0.15);
+  --warning: #f59e0b;
+  --warning-light: rgba(245, 158, 11, 0.15);
+  --danger: #ef4444;
+  --danger-light: rgba(239, 68, 68, 0.15);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.6), 0 4px 6px -4px rgba(0, 0, 0, 0.6);
+
+  /* Physical Diary Mode Variables */
+  --strike-color: #94a3b8;
+  --strike-bg: rgba(148, 163, 184, 0.12);
+  --shrink-badge-bg: #1e293b;
+  --shrink-badge-border: #475569;
+  --shrink-badge-text: #93c5fd;
+}
+
+[data-theme="light"] {
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-elevated: #f1f5f9;
+  --bg-input: #ffffff;
+  --bg-hover: #e2e8f0;
+  
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  
+  --border-color: #cbd5e1;
+  --border-subtle: #e2e8f0;
+  --border-focus: #0284c7;
+
+  --accent-primary: #0284c7;
+  --accent-hover: #0369a1;
+  --accent-light: rgba(2, 132, 199, 0.12);
+  
+  --success: #16a34a;
+  --success-light: rgba(22, 163, 74, 0.12);
+  --warning: #d97706;
+  --warning-light: rgba(217, 119, 6, 0.12);
+  --danger: #dc2626;
+  --danger-light: rgba(220, 38, 38, 0.12);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.08);
+
+  /* Physical Diary Mode Variables */
+  --strike-color: #64748b;
+  --strike-bg: rgba(100, 116, 139, 0.1);
+  --shrink-badge-bg: #e2e8f0;
+  --shrink-badge-border: #cbd5e1;
+  --shrink-badge-text: #0369a1;
+}
+
+/* Universal Reset & Base Styles */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: 'Inter', 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.6;
+  min-height: 100vh;
+  overflow-x: hidden;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* High-Contrast Inputs & Dropdowns per Rule 11 */
+input, select, textarea, button {
+  font-family: inherit;
+  color: var(--text-primary);
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+button {
+  cursor: pointer;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+
+button:hover {
+  background-color: var(--bg-hover);
+}
+
+button.primary-btn {
+  background-color: var(--accent-primary);
+  color: #ffffff;
+  border-color: transparent;
+  font-weight: 600;
+}
+
+button.primary-btn:hover {
+  background-color: var(--accent-hover);
+}
+
+/* Physical Diary Mode Specific Classes */
+.physical-ink-mode .struck-out-text {
+  font-weight: 300;
+  opacity: 0.65;
+  text-decoration: line-through;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--danger);
+  background-color: var(--strike-bg);
+  padding: 1px 4px;
+  border-radius: 4px;
+  display: inline;
+}
+
+.shrink-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background-color: var(--shrink-badge-bg);
+  border: 1px dashed var(--shrink-badge-border);
+  color: var(--shrink-badge-text);
+  cursor: pointer;
+  user-select: none;
+  margin: 0 4px;
+  vertical-align: middle;
+  transition: all 0.15s ease;
+}
+
+.shrink-badge:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.1);
+}
+
+/* Intrusion Alert Banner (Time-Delayed Reset Alert) */
+.alert-banner-pulse {
+  animation: bannerPulse 2.5s infinite ease-in-out;
+}
+
+@keyframes bannerPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+  }
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
