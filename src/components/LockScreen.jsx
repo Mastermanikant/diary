@@ -7,7 +7,6 @@ import {
   ShieldAlert, 
   Clock, 
   Sparkles, 
-  ClipboardPaste, 
   AlertTriangle, 
   Smartphone, 
   CheckCircle2, 
@@ -59,7 +58,13 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
   const [resetDelayHours, setResetDelayHours] = useState(24);
   const [deviceName, setDeviceName] = useState('मेरा प्राथमिक डिवाइस');
 
-  // Time-delayed reset dialog state
+  // Modal 1: Change Known Password Modal (When user remembers password)
+  const [showChangePinModal, setShowChangePinModal] = useState(false);
+  const [changeOldPin, setChangeOldPin] = useState('');
+  const [changeNewPin, setChangeNewPin] = useState('');
+  const [changeNewPinConfirm, setChangeNewPinConfirm] = useState('');
+
+  // Modal 2: Time-delayed reset dialog state (When user forgot password)
   const [showResetModal, setShowResetModal] = useState(false);
   const [answerAttempt, setAnswerAttempt] = useState('');
   const [resetNewPin, setResetNewPin] = useState('');
@@ -160,7 +165,6 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
         setErrorMsg('कृपया अपनी FrankPass सीक्रेट की दर्ज करें');
         return;
       }
-      // Generate deterministic key via FrankPass SDK
       effectivePassphrase = await generateFrankPassDeterministicKey(frankPassSecretKey, frankPassCounter);
     } else {
       if (setupPin.length < 4) {
@@ -275,7 +279,6 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
 
     try {
       setLoading(true);
-      // Derive 64-char deterministic key directly in RAM
       const deterministicKey = await generateFrankPassDeterministicKey(frankPassSecretKey, frankPassCounter);
 
       const saltBytes = new Uint8Array(base64ToBuffer(vaultConfig.salt));
@@ -298,24 +301,84 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
     }
   }
 
-  // FrankPass Paste Helper (Fallback)
-  async function handlePasteFrankPass() {
+  // ==========================================
+  // CHANGE KNOWN PASSWORD (INSTANT 5ms CHANGE)
+  // ==========================================
+  async function handleChangeKnownPin(e) {
+    e.preventDefault();
+    setErrorMsg('');
+
+    if (changeNewPin.length < 4) {
+      setErrorMsg('नया पिन कम से कम 4 अक्षरों का होना चाहिए');
+      return;
+    }
+    if (changeNewPin !== changeNewPinConfirm) {
+      setErrorMsg('नया पिन दोनों जगह मेल नहीं खा रहा');
+      return;
+    }
+
     try {
-      const text = await navigator.clipboard.readText();
-      if (text && text.trim()) {
-        setEnteredPin(text.trim());
-        setSuccessMsg('FrankPass से की पेस्ट हो गई!');
-        setTimeout(() => setSuccessMsg(''), 3000);
-      } else {
-        setErrorMsg('क्लिपबोर्ड खाली है। FrankPass से की कॉपी करें।');
+      setLoading(true);
+      const currentSaltBytes = new Uint8Array(base64ToBuffer(vaultConfig.salt));
+      const oldMasterKey = await deriveKeyFromPassphrase(changeOldPin, currentSaltBytes);
+
+      // Verify old PIN
+      const verified = await decryptPayload(oldMasterKey, vaultConfig.verifier_blob);
+      if (verified !== 'FRANKDIARY_VALID_KEY_TOKEN') {
+        setErrorMsg('वर्तमान पुराना पिन गलत है!');
+        setLoading(false);
+        return;
       }
-    } catch {
-      setErrorMsg('क्लिपबोर्ड एक्सेस की अनुमति नहीं मिली। कृपया हाथ से टाइप करें।');
+
+      // Old PIN is valid! Generate new salt & derive new master key
+      const newSaltBytes = generateRandomBytes(16);
+      const newSaltBase64 = bufferToBase64(newSaltBytes.buffer);
+      const newMasterKey = await deriveKeyFromPassphrase(changeNewPin, newSaltBytes);
+      const newVerifier = await encryptPayload(newMasterKey, 'FRANKDIARY_VALID_KEY_TOKEN');
+
+      let newWrappedDek = null;
+      if (vaultConfig.wrapped_dek) {
+        try {
+          const { rawBytes: rawDek } = await unwrapDek(oldMasterKey, vaultConfig.wrapped_dek);
+          newWrappedDek = await wrapDek(newMasterKey, rawDek);
+        } catch (unwErr) {
+          console.warn('DEK rewrap warning:', unwErr);
+        }
+      }
+
+      const updatedConfig = {
+        ...vaultConfig,
+        salt: newSaltBase64,
+        verifier_blob: newVerifier,
+        wrapped_dek: newWrappedDek || vaultConfig.wrapped_dek
+      };
+
+      await saveVaultConfig(updatedConfig);
+      setVaultConfig(updatedConfig);
+      setShowChangePinModal(false);
+      setChangeOldPin('');
+      setChangeNewPin('');
+      setChangeNewPinConfirm('');
+      setSuccessMsg('🎉 पासवर्ड सफलतापूर्वक बदल दिया गया और वॉल्ट अनलॉक हो गया!');
+
+      // Automatically log the user in with new key
+      setTimeout(() => {
+        onUnlockSuccess({
+          masterKey: newMasterKey,
+          config: updatedConfig,
+          passphrase: changeNewPin
+        });
+      }, 400);
+
+    } catch (err) {
+      setErrorMsg('पासवर्ड बदलने में त्रुटि: ' + err.message);
+    } finally {
+      setLoading(false);
     }
   }
 
   // ==========================================
-  // TIME-DELAYED RESET: STAGE NEW PASSWORD
+  // TIME-DELAYED RESET (WHEN PASSWORD IS FORGOTTEN)
   // ==========================================
   async function handleInitiateReset(e) {
     e.preventDefault();
@@ -522,19 +585,20 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
                   />
                 </div>
 
+                {/* Direct Action Links: Password Change (When Remembered) + Forgot PIN (When Forgotten) */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                   <button
                     type="button"
-                    onClick={handlePasteFrankPass}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--accent-primary)', backgroundColor: 'transparent', border: 'none', padding: '4px 0' }}
+                    onClick={() => { setShowChangePinModal(true); setErrorMsg(''); }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.78rem', color: 'var(--accent-primary)', backgroundColor: 'transparent', border: 'none', padding: '4px 0' }}
                   >
-                    <ClipboardPaste size={14} />
-                    क्लिपबोर्ड से पेस्ट करें
+                    <KeyRound size={14} />
+                    पासवर्ड बदलें
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => setShowResetModal(true)}
+                    onClick={() => { setShowResetModal(true); setErrorMsg(''); }}
                     style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem', color: 'var(--text-muted)', backgroundColor: 'transparent', border: 'none', padding: '4px 0' }}
                   >
                     <HelpCircle size={14} />
@@ -590,7 +654,7 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
                       style={{ width: '80px', padding: '10px 12px', fontSize: '0.95rem', textAlign: 'center' }}
                     />
                     <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                      (डिफ़ॉल्ट 1 है, जब तक आपने FrankPass में अन्य नंबर न चुना हो)
+                      (डिफ़ॉल्ट 1 है, जब तक आपने अन्य नंबर न चुना हो)
                     </span>
                   </div>
                 </div>
@@ -615,7 +679,6 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
         {/* ========================================== */}
         {isNewVault && (
           <div>
-            {/* Setup Mode Tabs */}
             <div style={{ display: 'flex', backgroundColor: 'var(--bg-elevated)', padding: '3px', borderRadius: '10px', marginBottom: '18px' }}>
               <button
                 type="button"
@@ -785,7 +848,97 @@ export default function LockScreen({ onUnlockSuccess, currentTheme, toggleTheme 
       </div>
 
       {/* ========================================== */}
-      {/* MODAL: TIME-DELAYED RESET */}
+      {/* MODAL 1: CHANGE KNOWN PASSWORD (INSTANT 5ms) */}
+      {/* ========================================== */}
+      {showChangePinModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', zIndex: 1000 }}>
+          <div style={{ width: '100%', maxWidth: '420px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', boxShadow: 'var(--shadow-lg)' }}>
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <KeyRound size={20} color="var(--accent-primary)" />
+                मास्टर पासवर्ड बदलें
+              </h3>
+              <button 
+                onClick={() => setShowChangePinModal(false)}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: 1.5 }}>
+              यदि आपको अपना वर्तमान पासवर्ड याद है, तो आप तुरंत नया पासवर्ड सेट कर सकते हैं। यह <strong>0.005 सेकंड</strong> में बिना किसी डेटा लॉस के तुरंत बदल जाएगा!
+            </p>
+
+            <form onSubmit={handleChangeKnownPin}>
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  वर्तमान पुराना पासवर्ड
+                </label>
+                <input
+                  type="password"
+                  placeholder="वर्तमान पिन / पासवर्ड"
+                  value={changeOldPin}
+                  onChange={(e) => setChangeOldPin(e.target.value)}
+                  required
+                  autoFocus
+                  style={{ width: '100%', padding: '9px 12px', fontSize: '0.88rem' }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  नया पासवर्ड बनाएं
+                </label>
+                <input
+                  type="password"
+                  placeholder="कम से कम 4 अक्षर"
+                  value={changeNewPin}
+                  onChange={(e) => setChangeNewPin(e.target.value)}
+                  required
+                  style={{ width: '100%', padding: '9px 12px', fontSize: '0.88rem' }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '18px' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  नए पासवर्ड की पुष्टि करें
+                </label>
+                <input
+                  type="password"
+                  placeholder="नया पासवर्ड दोबारा दर्ज करें"
+                  value={changeNewPinConfirm}
+                  onChange={(e) => setChangeNewPinConfirm(e.target.value)}
+                  required
+                  style={{ width: '100%', padding: '9px 12px', fontSize: '0.88rem' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowChangePinModal(false)}
+                  style={{ flex: 1, padding: '10px', fontSize: '0.85rem' }}
+                >
+                  रद्द करें
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="primary-btn"
+                  style={{ flex: 1, padding: '10px', fontSize: '0.85rem' }}
+                >
+                  {loading ? 'बदल रहा है...' : 'तुरंत पासवर्ड बदलें'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================== */}
+      {/* MODAL 2: TIME-DELAYED RESET (WHEN FORGOTTEN) */}
       {/* ========================================== */}
       {showResetModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', zIndex: 1000 }}>

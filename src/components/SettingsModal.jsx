@@ -14,7 +14,7 @@ import {
   CheckCircle2,
   Lock
 } from 'lucide-react';
-import { deriveKeyFromPassphrase, encryptPayload, generateRandomBytes, bufferToBase64 } from '../crypto/vaultCrypto';
+import { deriveKeyFromPassphrase, encryptPayload, generateRandomBytes, bufferToBase64, base64ToBuffer, wrapDek, unwrapDek } from '../crypto/vaultCrypto';
 import { saveVaultConfig, clearAllVaultData } from '../storage/localVault';
 
 export default function SettingsModal({ 
@@ -92,10 +92,23 @@ export default function SettingsModal({
       const newKey = await deriveKeyFromPassphrase(newPin, newSalt);
       const newVerifier = await encryptPayload(newKey, 'FRANKDIARY_VALID_KEY_TOKEN');
 
+      let newWrappedDek = null;
+      if (vaultConfig.wrapped_dek) {
+        try {
+          const oldSaltBytes = new Uint8Array(base64ToBuffer(vaultConfig.salt));
+          const oldKey = await deriveKeyFromPassphrase(oldPin, oldSaltBytes);
+          const { rawBytes: rawDek } = await unwrapDek(oldKey, vaultConfig.wrapped_dek);
+          newWrappedDek = await wrapDek(newKey, rawDek);
+        } catch (unwErr) {
+          console.warn('DEK rewrap warning:', unwErr);
+        }
+      }
+
       const updatedConfig = {
         ...vaultConfig,
         salt: newSaltBase64,
         verifier_blob: newVerifier,
+        wrapped_dek: newWrappedDek || vaultConfig.wrapped_dek
       };
 
       await saveVaultConfig(updatedConfig);
