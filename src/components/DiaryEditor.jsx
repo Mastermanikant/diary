@@ -11,13 +11,23 @@ import {
   Tag, 
   Smile, 
   RotateCcw,
-  CheckCircle2,
-  Eye,
-  EyeOff,
-  Sparkles
+  CheckCircle2, 
+  Eye, 
+  EyeOff, 
+  Sparkles,
+  Type,
+  FolderLock
 } from 'lucide-react';
 import { encryptPayload } from '../crypto/vaultCrypto';
 import { saveEncryptedEntry } from '../storage/localVault';
+import { executeSyncCycle } from '../storage/syncEngine';
+
+const VAULT_CATEGORIES = [
+  { id: 'personal', emoji: '📔', label: 'व्यक्तिगत' },
+  { id: 'work', emoji: '💼', label: 'कार्य व प्रोजेक्ट्स' },
+  { id: 'secret', emoji: '🔒', label: 'अति-गोपनीय' },
+  { id: 'health', emoji: '🧘', label: 'स्वास्थ्य व चिंतन' },
+];
 
 const MOOD_OPTIONS = [
   { id: 'happy', emoji: '😃', label: 'खुश' },
@@ -27,7 +37,7 @@ const MOOD_OPTIONS = [
   { id: 'energetic', emoji: '⚡', label: 'ऊर्जायुक्त' },
 ];
 
-const PRESET_TAGS = ['#personal', '#startup', '#family', '#health', '#reflections', '#ideas'];
+const PRESET_TAGS = ['#personal', '#startup', '#family', '#health', '#reflections', '#ideas', '#goals'];
 
 export default function DiaryEditor({ 
   entryToEdit, 
@@ -50,6 +60,12 @@ export default function DiaryEditor({
   const [newTagInput, setNewTagInput] = useState('');
   const [isFavorite, setIsFavorite] = useState(entryToEdit?.is_favorite || false);
   
+  // Vault Selection (Edition)
+  const [vaultCategory, setVaultCategory] = useState(entryToEdit?.vault_category || 'personal');
+
+  // Cursive / Handwriting Typography Mode
+  const [fontStyle, setFontStyle] = useState(entryToEdit?.font_style || 'cursive'); // 'cursive' | 'standard'
+
   // Physical Diary Mode States
   const [physicalMode, setPhysicalMode] = useState(
     entryToEdit?.physical_mode !== undefined ? entryToEdit.physical_mode : (vaultConfig?.physical_diary_mode ?? true)
@@ -96,7 +112,6 @@ export default function DiaryEditor({
     const selectedText = content.substring(start, end);
     const timeStamp = new Date().toLocaleTimeString('hi-IN', { hour: '2-digit', minute: '2-digit' });
 
-    // Store struck item in history
     const newStruck = {
       id: 'struck_' + Date.now(),
       text: selectedText,
@@ -106,7 +121,6 @@ export default function DiaryEditor({
 
     setStruckItems([...struckItems, newStruck]);
 
-    // Replace selected text with clean marker in text or remove it from main stream
     const before = content.substring(0, start);
     const after = content.substring(end);
 
@@ -116,7 +130,7 @@ export default function DiaryEditor({
   }
 
   // ==========================================
-  // ENCRYPT & SAVE ENTRY
+  // ENCRYPT & SAVE ENTRY (TIME-BASED LWW)
   // ==========================================
   async function handleSave() {
     if (!content.trim() && !title.trim()) {
@@ -137,6 +151,8 @@ export default function DiaryEditor({
         content: content,
         mood,
         tags,
+        vault_category: vaultCategory,
+        font_style: fontStyle,
         is_favorite: isFavorite,
         physical_mode: physicalMode,
         struck_items: struckItems,
@@ -152,10 +168,11 @@ export default function DiaryEditor({
         id: entryId,
         date: date,
         time: time,
+        vault_category: vaultCategory,
         created_at: entryToEdit?.created_at || now,
-        updated_at: now,
+        updated_at: now, // Epoch timestamp for single-user Time-based LWW
         device_name: vaultConfig?.device_name || 'My Device',
-        sync_status: 'local_only', // Prepared for Cloud Sync
+        sync_status: vaultConfig?.cloud_sync_enabled ? 'pending' : 'local_only',
         encrypted_data: encryptedBlob,
         preview_title: title.trim() ? title.trim().substring(0, 60) : 'आज की डायरी',
         preview_mood: mood,
@@ -165,9 +182,16 @@ export default function DiaryEditor({
       await saveEncryptedEntry(recordToSave);
       setStatusMsg('सफलतापूर्वक एन्क्रिप्ट और सुरक्षित सेव हो गया!');
 
+      // If cloud sync is on, trigger silent delta sync in background
+      if (vaultConfig?.cloud_sync_enabled && navigator.onLine) {
+        executeSyncCycle({ config: vaultConfig }).catch(err => {
+          console.warn('Background sync on save error:', err);
+        });
+      }
+
       setTimeout(() => {
         onSaveComplete();
-      }, 500);
+      }, 400);
 
     } catch (err) {
       alert('सेव करने में त्रुटि: ' + err.message);
@@ -177,36 +201,59 @@ export default function DiaryEditor({
   }
 
   return (
-    <div style={{ maxWidth: '840px', margin: '0 auto', padding: '16px 12px 64px' }}>
+    <div style={{ maxWidth: '860px', margin: '0 auto', padding: '16px 12px 64px' }}>
       
       {/* Top Header Bar */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
         
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
           <button
             onClick={onBack}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '0.85rem', borderRadius: '8px' }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 14px', fontSize: '0.85rem', borderRadius: '8px', cursor: 'pointer' }}
           >
             <ArrowLeft size={16} />
             डायरी सूची
           </button>
 
-          {/* Device Signature Badge */}
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-muted)', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 12px', borderRadius: '20px' }}>
-            <Smartphone size={14} color="var(--accent-primary)" />
+          {/* Device Badge */}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.78rem', color: 'var(--text-muted)', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '5px 10px', borderRadius: '20px' }}>
+            <Smartphone size={13} color="var(--accent-primary)" />
             {vaultConfig?.device_name || 'My Device'}
           </span>
         </div>
 
         {/* Action Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          {/* Cursive Font Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setFontStyle(prev => prev === 'cursive' ? 'standard' : 'cursive')}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '7px 12px',
+              borderRadius: '8px',
+              fontSize: '0.82rem',
+              fontWeight: '600',
+              backgroundColor: fontStyle === 'cursive' ? 'var(--accent-light)' : 'var(--bg-card)',
+              color: fontStyle === 'cursive' ? 'var(--accent-primary)' : 'var(--text-muted)',
+              border: `1px solid ${fontStyle === 'cursive' ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+              cursor: 'pointer',
+            }}
+            title="कर्सिव लिखावट मोड ऑन/ऑफ करें"
+          >
+            <Type size={15} />
+            {fontStyle === 'cursive' ? '✍️ कर्सिव मोड ON' : '🔤 सामान्य मोड'}
+          </button>
+
           {/* Favorite Star */}
           <button
             onClick={() => setIsFavorite(!isFavorite)}
-            style={{ padding: '8px 12px', borderRadius: '8px', color: isFavorite ? '#eab308' : 'var(--text-muted)', backgroundColor: 'var(--bg-card)' }}
+            style={{ padding: '7px 11px', borderRadius: '8px', color: isFavorite ? '#eab308' : 'var(--text-muted)', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', cursor: 'pointer' }}
             title="पसंदीदा (Bookmark)"
           >
-            <Star size={18} fill={isFavorite ? '#eab308' : 'none'} />
+            <Star size={17} fill={isFavorite ? '#eab308' : 'none'} />
           </button>
 
           {/* Physical Diary Mode Toggle */}
@@ -215,18 +262,19 @@ export default function DiaryEditor({
             style={{ 
               display: 'inline-flex', 
               alignItems: 'center', 
-              gap: '6px', 
-              padding: '8px 12px', 
+              gap: '5px', 
+              padding: '7px 11px', 
               borderRadius: '8px', 
               fontSize: '0.82rem',
               backgroundColor: physicalMode ? 'var(--accent-light)' : 'var(--bg-card)',
               color: physicalMode ? 'var(--accent-primary)' : 'var(--text-muted)',
-              borderColor: physicalMode ? 'var(--accent-primary)' : 'var(--border-color)'
+              border: `1px solid ${physicalMode ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+              cursor: 'pointer'
             }}
             title="फिजिकल डायरी मोड: कटा हुआ शब्द मिटता नहीं, सुरक्षित रहता है"
           >
-            <PenTool size={16} />
-            {physicalMode ? 'फिजिकल मोड ON' : 'क्लीन मोड'}
+            <PenTool size={15} />
+            {physicalMode ? 'फिजिकल मोड' : 'क्लीन'}
           </button>
 
           {/* Save Button */}
@@ -234,9 +282,9 @@ export default function DiaryEditor({
             onClick={handleSave}
             disabled={saving}
             className="primary-btn"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 18px', fontSize: '0.88rem', borderRadius: '8px' }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 16px', fontSize: '0.88rem', borderRadius: '8px', cursor: 'pointer' }}
           >
-            <Lock size={16} />
+            <Lock size={15} />
             {saving ? 'एन्क्रिप्ट हो रहा...' : 'सुरक्षित सेव करें'}
           </button>
         </div>
@@ -244,37 +292,55 @@ export default function DiaryEditor({
       </div>
 
       {statusMsg && (
-        <div style={{ backgroundColor: 'var(--success-light)', border: '1px solid var(--success)', color: 'var(--success)', padding: '8px 14px', borderRadius: '8px', fontSize: '0.85rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div style={{ backgroundColor: 'var(--success-light)', border: '1px solid var(--success)', color: 'var(--success)', padding: '8px 14px', borderRadius: '8px', fontSize: '0.85rem', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <CheckCircle2 size={16} />
           {statusMsg}
         </div>
       )}
 
       {/* Main Paper Sheet Card */}
-      <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px 20px', boxShadow: 'var(--shadow-md)' }}>
+      <div style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '22px 20px', boxShadow: 'var(--shadow-md)' }}>
         
+        {/* Vault Categories Bar */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '14px', paddingBottom: '12px', borderBottom: '1px solid var(--border-subtle)' }}>
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <FolderLock size={14} /> वाल्ट:
+          </span>
+          {VAULT_CATEGORIES.map((cat) => (
+            <button
+              key={cat.id}
+              type="button"
+              onClick={() => setVaultCategory(cat.id)}
+              className={`vault-pill ${vaultCategory === cat.id ? 'active' : ''}`}
+            >
+              <span>{cat.emoji}</span>
+              <span>{cat.label}</span>
+            </button>
+          ))}
+        </div>
+
         {/* Date, Time & Mood Bar */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '14px', paddingBottom: '16px', borderBottom: '1px solid var(--border-subtle)', marginBottom: '18px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', paddingBottom: '14px', borderBottom: '1px solid var(--border-subtle)', marginBottom: '16px' }}>
           
           {/* Date & Time Pickers */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Calendar size={16} color="var(--accent-primary)" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <Calendar size={15} color="var(--accent-primary)" />
               <input
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                style={{ padding: '6px 10px', fontSize: '0.85rem', border: 'none', backgroundColor: 'transparent' }}
+                style={{ padding: '5px 8px', fontSize: '0.85rem', border: 'none', backgroundColor: 'transparent' }}
               />
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Clock size={16} color="var(--text-muted)" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <Clock size={15} color="var(--text-muted)" />
               <input
                 type="text"
                 value={time}
                 onChange={(e) => setTime(e.target.value)}
-                style={{ width: '85px', padding: '6px 8px', fontSize: '0.85rem', border: 'none', backgroundColor: 'transparent' }}
+                style={{ width: '80px', padding: '5px 6px', fontSize: '0.85rem', border: 'none', backgroundColor: 'transparent' }}
               />
             </div>
           </div>
@@ -287,15 +353,16 @@ export default function DiaryEditor({
                 type="button"
                 onClick={() => setMood(m.id)}
                 style={{
-                  padding: '6px 10px',
+                  padding: '5px 9px',
                   borderRadius: '20px',
-                  fontSize: '0.82rem',
+                  fontSize: '0.8rem',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '4px',
                   backgroundColor: mood === m.id ? 'var(--accent-light)' : 'transparent',
-                  borderColor: mood === m.id ? 'var(--accent-primary)' : 'var(--border-subtle)',
-                  color: mood === m.id ? 'var(--accent-primary)' : 'var(--text-secondary)'
+                  border: `1px solid ${mood === m.id ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+                  color: mood === m.id ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                  cursor: 'pointer'
                 }}
               >
                 <span>{m.emoji}</span>
@@ -309,21 +376,33 @@ export default function DiaryEditor({
         {/* Title Input */}
         <input
           type="text"
-          placeholder="पन्ने का शीर्षक या आज का मुख्य विषय... (वैकल्पिक)"
+          placeholder="पन्ने का शीर्षक या आज का मुख्य विषय..."
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          style={{ width: '100%', fontSize: '1.25rem', fontWeight: 700, padding: '8px 0', border: 'none', borderBottom: '1px solid var(--border-subtle)', borderRadius: 0, marginBottom: '16px', backgroundColor: 'transparent' }}
+          className={fontStyle === 'cursive' ? 'font-cursive' : 'font-standard'}
+          style={{ 
+            width: '100%', 
+            fontSize: fontStyle === 'cursive' ? '1.5rem' : '1.3rem', 
+            fontWeight: 700, 
+            padding: '8px 0', 
+            border: 'none', 
+            borderBottom: '1px solid var(--border-subtle)', 
+            borderRadius: 0, 
+            marginBottom: '16px', 
+            backgroundColor: 'transparent',
+            color: 'var(--text-primary)'
+          }}
         />
 
         {/* Physical Mode Quick Action Bar */}
         {physicalMode && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'var(--bg-elevated)', padding: '8px 14px', borderRadius: '8px', marginBottom: '14px', fontSize: '0.8rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'var(--bg-elevated)', padding: '7px 12px', borderRadius: '8px', marginBottom: '14px', fontSize: '0.8rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>फिजिकल डायरी टूल:</span>
               <button
                 type="button"
                 onClick={handleStrikeSelectedText}
-                style={{ padding: '4px 10px', fontSize: '0.78rem', borderRadius: '6px', backgroundColor: 'var(--bg-card)', color: 'var(--danger)', borderColor: 'var(--danger)' }}
+                style={{ padding: '3px 8px', fontSize: '0.76rem', borderRadius: '6px', backgroundColor: 'var(--bg-card)', color: 'var(--danger)', border: '1px solid var(--danger)', cursor: 'pointer' }}
               >
                 काटें (Strike Selected Text)
               </button>
@@ -333,9 +412,9 @@ export default function DiaryEditor({
               <button
                 type="button"
                 onClick={() => setShrinkStruckText(!shrinkStruckText)}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', fontSize: '0.75rem', background: 'transparent', border: 'none', color: 'var(--text-muted)' }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 6px', fontSize: '0.74rem', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
               >
-                {shrinkStruckText ? <Eye size={14} /> : <EyeOff size={14} />}
+                {shrinkStruckText ? <Eye size={13} /> : <EyeOff size={13} />}
                 {shrinkStruckText ? `कटे हुए शब्द देखें (${struckItems.length})` : 'कटे हुए शब्द छिपाएं'}
               </button>
             )}
@@ -372,34 +451,43 @@ export default function DiaryEditor({
           </div>
         )}
 
-        {/* Main Text Content Area */}
+        {/* Main Text Content Area (Cursive / Standard Font) */}
         <textarea
           ref={editorRef}
           placeholder="यहाँ अपने मन के विचार, आज की घटनाएं या गुप्त योजनाएं लिखें...&#10;सब कुछ केवल आपके डिवाइस पर एन्क्रिप्ट होकर सुरक्षित रहेगा।"
           value={content}
           onChange={(e) => setContent(e.target.value)}
           rows={16}
-          style={{ width: '100%', padding: '12px 8px', fontSize: '1rem', border: 'none', resize: 'vertical', lineHeight: 1.7, backgroundColor: 'transparent' }}
+          className={fontStyle === 'cursive' ? 'font-cursive' : 'font-standard'}
+          style={{ 
+            width: '100%', 
+            padding: '12px 6px', 
+            border: 'none', 
+            resize: 'vertical', 
+            backgroundColor: 'transparent',
+            color: 'var(--text-primary)',
+            outline: 'none',
+          }}
         />
 
         {/* Tags & Word Count Footer */}
-        <div style={{ paddingTop: '16px', borderTop: '1px solid var(--border-subtle)', marginTop: '16px' }}>
+        <div style={{ paddingTop: '16px', borderTop: '1px solid var(--border-subtle)', marginTop: '14px' }}>
           
           {/* Active Tags */}
-          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <Tag size={14} /> टैग्स:
+              <Tag size={13} /> टैग्स:
             </span>
             {tags.map((t) => (
               <span
                 key={t}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem', backgroundColor: 'var(--bg-elevated)', padding: '3px 10px', borderRadius: '12px', color: 'var(--accent-primary)' }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem', backgroundColor: 'var(--bg-elevated)', padding: '2px 9px', borderRadius: '12px', color: 'var(--accent-primary)' }}
               >
                 {t}
                 <button
                   type="button"
                   onClick={() => handleRemoveTag(t)}
-                  style={{ border: 'none', background: 'transparent', padding: '0 2px', color: 'var(--text-muted)', fontSize: '0.85rem', lineHeight: 1 }}
+                  style={{ border: 'none', background: 'transparent', padding: '0 2px', color: 'var(--text-muted)', fontSize: '0.85rem', lineHeight: 1, cursor: 'pointer' }}
                 >
                   ×
                 </button>
@@ -430,7 +518,7 @@ export default function DiaryEditor({
                   key={pt}
                   type="button"
                   onClick={() => handleAddTag(pt)}
-                  style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'transparent', border: '1px dashed var(--border-color)', color: 'var(--text-muted)' }}
+                  style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'transparent', border: '1px dashed var(--border-color)', color: 'var(--text-muted)', cursor: 'pointer' }}
                 >
                   {pt}
                 </button>

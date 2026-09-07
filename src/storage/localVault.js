@@ -126,3 +126,92 @@ export async function clearAllVaultData() {
     tx.onerror = () => reject(tx.error);
   });
 }
+
+// ==========================================
+// SYNC ENGINE STORAGE HELPERS
+// ==========================================
+
+export async function getPendingSyncEntries() {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('entries', 'readonly');
+    const store = tx.objectStore('entries');
+    const request = store.getAll();
+
+    request.onsuccess = () => {
+      const all = request.result || [];
+      const pending = all.filter(e => e.sync_status === 'pending');
+      resolve(pending);
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function markEntriesAsSynced(entryIds) {
+  if (!entryIds || entryIds.length === 0) return true;
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('entries', 'readwrite');
+    const store = tx.objectStore('entries');
+
+    for (const id of entryIds) {
+      const getReq = store.get(id);
+      getReq.onsuccess = () => {
+        if (getReq.result) {
+          const updated = { ...getReq.result, sync_status: 'synced' };
+          store.put(updated);
+        }
+      };
+    }
+
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function batchUpsertRemoteEntries(remoteEntries) {
+  if (!remoteEntries || remoteEntries.length === 0) return 0;
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('entries', 'readwrite');
+    const store = tx.objectStore('entries');
+    let updatedCount = 0;
+
+    for (const remote of remoteEntries) {
+      const getReq = store.get(remote.id);
+      getReq.onsuccess = () => {
+        const local = getReq.result;
+        // Time-based Last-Write-Wins: update only if remote is newer or doesn't exist locally
+        if (!local || (remote.updated_at && remote.updated_at > (local.updated_at || 0))) {
+          if (remote.is_deleted) {
+            store.delete(remote.id);
+          } else {
+            const entryToSave = {
+              id: remote.id,
+              vault_category: remote.vault_category || 'personal',
+              date: remote.date,
+              time: remote.time,
+              created_at: remote.created_at || remote.updated_at,
+              updated_at: remote.updated_at,
+              device_name: remote.device_name,
+              sync_status: 'synced',
+              encrypted_data: typeof remote.encrypted_data === 'string' && remote.encrypted_nonce ? {
+                nonce: remote.encrypted_nonce,
+                ciphertext: remote.encrypted_data
+              } : remote.encrypted_data,
+              preview_title: remote.preview_title,
+              preview_mood: remote.preview_mood,
+              preview_is_favorite: !!remote.preview_is_favorite
+            };
+            store.put(entryToSave);
+          }
+          updatedCount++;
+        }
+      };
+    }
+
+    tx.oncomplete = () => resolve(updatedCount);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+

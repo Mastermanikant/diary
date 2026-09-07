@@ -199,3 +199,78 @@ button.primary-btn:hover {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
 }
+
+/* ==========================================================================
+   Cursive & Handwriting Typography Modes (Devanagari Kalam + English Caveat)
+   ========================================================================== */
+.font-cursive {
+  font-family: 'Kalam', 'Caveat', 'Dancing Script', cursive, sans-serif !important;
+  font-size: 1.22rem !important;
+  line-height: 1.85 !important;
+  letter-spacing: 0.02em !important;
+  font-weight: 400 !important;
+}
+
+.font-standard {
+  font-family: 'Inter', 'Noto Sans Devanagari', -apple-system, sans-serif !important;
+  font-size: 1rem !important;
+  line-height: 1.6 !important;
+}
+
+/* Vault Selector & Badges */
+.vault-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 9999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.vault-pill:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
+}
+
+.vault-pill.active {
+  background: var(--accent-primary);
+  color: #ffffff;
+  border-color: var(--accent-primary);
+  box-shadow: 0 2px 4px rgba(56, 189, 248, 0.25);
+}
+
+/* Tag Chips */
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.tag-chip:hover {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+}
+
+.tag-chip.active {
+  background: var(--accent-light);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  font-weight: 600;
+}

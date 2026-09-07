@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Plus, 
   Search, 
@@ -11,7 +11,9 @@ import {
   PenTool, 
   Tag, 
   Filter,
-  FileText
+  FileText,
+  FolderLock,
+  Type
 } from 'lucide-react';
 
 const MOOD_EMOJIS = {
@@ -21,6 +23,14 @@ const MOOD_EMOJIS = {
   sad: '😔',
   energetic: '⚡',
 };
+
+const VAULT_TABS = [
+  { id: 'all', emoji: '✨', label: 'सभी वाल्ट्स' },
+  { id: 'personal', emoji: '📔', label: 'व्यक्तिगत' },
+  { id: 'work', emoji: '💼', label: 'कार्य' },
+  { id: 'secret', emoji: '🔒', label: 'गोपनीय' },
+  { id: 'health', emoji: '🧘', label: 'स्वास्थ्य' },
+];
 
 export default function EntryList({ 
   entries, 
@@ -32,10 +42,34 @@ export default function EntryList({
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMood, setSelectedMood] = useState('all');
+  const [selectedVault, setSelectedVault] = useState('all');
+  const [selectedTag, setSelectedTag] = useState(null);
   const [onlyFavorites, setOnlyFavorites] = useState(false);
+
+  // Extract all unique tags across decrypted entries in RAM
+  const allAvailableTags = useMemo(() => {
+    const tagSet = new Set();
+    entries.forEach(e => {
+      if (Array.isArray(e.tags)) {
+        e.tags.forEach(t => tagSet.add(t));
+      }
+    });
+    return Array.from(tagSet);
+  }, [entries]);
 
   // Client-Side Zero-Knowledge Filtering across decrypted records in RAM
   const filteredEntries = entries.filter((item) => {
+    // Vault filter
+    if (selectedVault !== 'all') {
+      const cat = item.vault_category || 'personal';
+      if (cat !== selectedVault) return false;
+    }
+
+    // Tag filter
+    if (selectedTag) {
+      if (!item.tags || !item.tags.includes(selectedTag)) return false;
+    }
+
     // Search query match
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -62,10 +96,10 @@ export default function EntryList({
   });
 
   return (
-    <div style={{ maxWidth: '840px', margin: '0 auto', padding: '16px 12px 64px' }}>
+    <div style={{ maxWidth: '860px', margin: '0 auto', padding: '16px 12px 64px' }}>
       
       {/* Search & Filter Header Bar */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '22px' }}>
         
         {/* Search Input Bar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -73,7 +107,7 @@ export default function EntryList({
             <Search size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
             <input
               type="text"
-              placeholder="डायरी में खोजें (शब्द, टैग, तारीख)... 100% ऑन-डिवाइस सर्च"
+              placeholder="डायरी में खोजें (शीर्षक, शब्द, टैग, तारीख)... 100% ऑन-डिवाइस सर्च"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               style={{ width: '100%', padding: '12px 14px 12px 38px', fontSize: '0.9rem', borderRadius: '12px' }}
@@ -83,17 +117,65 @@ export default function EntryList({
           <button
             onClick={onNewEntry}
             className="primary-btn"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '12px 18px', fontSize: '0.9rem', borderRadius: '12px', flexShrink: 0 }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '12px 18px', fontSize: '0.9rem', borderRadius: '12px', flexShrink: 0, cursor: 'pointer' }}
           >
             <Plus size={18} />
             <span style={{ display: 'inline' }}>नया पन्ना</span>
           </button>
         </div>
 
-        {/* Quick Filter Chips */}
+        {/* Vault Categories Switcher Tabs */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
+          {VAULT_TABS.map((vt) => (
+            <button
+              key={vt.id}
+              onClick={() => setSelectedVault(vt.id)}
+              className={`vault-pill ${selectedVault === vt.id ? 'active' : ''}`}
+            >
+              <span>{vt.emoji}</span>
+              <span>{vt.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Available Tag Chips Filter Bar */}
+        {allAvailableTags.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+              <Tag size={12} /> टैग्स:
+            </span>
+            {selectedTag && (
+              <button
+                onClick={() => setSelectedTag(null)}
+                style={{
+                  fontSize: '0.72rem',
+                  padding: '2px 8px',
+                  borderRadius: '6px',
+                  backgroundColor: 'var(--danger-light)',
+                  color: 'var(--danger)',
+                  border: '1px solid var(--danger)',
+                  cursor: 'pointer'
+                }}
+              >
+                ✕ टैग हटाएं
+              </button>
+            )}
+            {allAvailableTags.map((t) => (
+              <button
+                key={t}
+                onClick={() => setSelectedTag(selectedTag === t ? null : t)}
+                className={`tag-chip ${selectedTag === t ? 'active' : ''}`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Mood & Favorite Filters Bar */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
           
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflowX: 'auto' }}>
             <button
               onClick={() => setSelectedMood('all')}
               style={{
@@ -102,7 +184,8 @@ export default function EntryList({
                 borderRadius: '14px',
                 backgroundColor: selectedMood === 'all' ? 'var(--accent-light)' : 'transparent',
                 borderColor: selectedMood === 'all' ? 'var(--accent-primary)' : 'var(--border-color)',
-                color: selectedMood === 'all' ? 'var(--accent-primary)' : 'var(--text-secondary)'
+                color: selectedMood === 'all' ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                cursor: 'pointer'
               }}
             >
               सभी मूड
@@ -114,11 +197,12 @@ export default function EntryList({
                 onClick={() => setSelectedMood(selectedMood === key ? 'all' : key)}
                 style={{
                   fontSize: '0.78rem',
-                  padding: '4px 10px',
+                  padding: '4px 9px',
                   borderRadius: '14px',
                   backgroundColor: selectedMood === key ? 'var(--accent-light)' : 'transparent',
                   borderColor: selectedMood === key ? 'var(--accent-primary)' : 'var(--border-color)',
-                  color: selectedMood === key ? 'var(--accent-primary)' : 'var(--text-secondary)'
+                  color: selectedMood === key ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                  cursor: 'pointer'
                 }}
               >
                 {emoji}
@@ -138,11 +222,12 @@ export default function EntryList({
               borderRadius: '14px',
               backgroundColor: onlyFavorites ? 'rgba(234, 179, 8, 0.15)' : 'transparent',
               borderColor: onlyFavorites ? '#eab308' : 'var(--border-color)',
-              color: onlyFavorites ? '#eab308' : 'var(--text-muted)'
+              color: onlyFavorites ? '#eab308' : 'var(--text-muted)',
+              cursor: 'pointer'
             }}
           >
             <Star size={14} fill={onlyFavorites ? '#eab308' : 'none'} />
-            केवल खास (Favorites)
+            केवल पसंदीदा (Favorites)
           </button>
 
         </div>
@@ -161,16 +246,16 @@ export default function EntryList({
         <div style={{ textAlign: 'center', padding: '64px 20px', backgroundColor: 'var(--bg-card)', borderRadius: '16px', border: '1px dashed var(--border-color)' }}>
           <FileText size={48} color="var(--text-muted)" style={{ margin: '0 auto 16px', opacity: 0.6 }} />
           <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>
-            {searchQuery ? 'कोई परिणाम नहीं मिला' : 'डायरी अभी खाली है'}
+            {searchQuery || selectedTag || selectedVault !== 'all' ? 'कोई परिणाम नहीं मिला' : 'डायरी अभी खाली है'}
           </h3>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', maxWidth: '360px', margin: '0 auto 20px' }}>
-            {searchQuery ? 'अन्य शब्द या टैग से खोजें।' : 'आज के दिन की शुरुआत करें। जो भी आपके दिल में है, उसे सुरक्षित लिख डालें।'}
+            {searchQuery || selectedTag ? 'अन्य शब्द या टैग से खोजें।' : 'पहला पन्ना लिखें। जो भी आपके दिल में है, उसे कर्सिव या सामान्य रूप में सुरक्षित लिख डालें।'}
           </p>
-          {!searchQuery && (
+          {!searchQuery && !selectedTag && (
             <button
               onClick={onNewEntry}
               className="primary-btn"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '10px 20px', fontSize: '0.9rem', borderRadius: '10px' }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '10px 20px', fontSize: '0.9rem', borderRadius: '10px', cursor: 'pointer' }}
             >
               <Plus size={16} /> पहला पन्ना लिखें
             </button>
@@ -187,6 +272,7 @@ export default function EntryList({
             month: 'short',
             year: 'numeric',
           });
+          const vaultLabel = VAULT_TABS.find(v => v.id === entry.vault_category)?.label || 'व्यक्तिगत';
 
           return (
             <div
@@ -210,11 +296,11 @@ export default function EntryList({
                 e.currentTarget.style.boxShadow = 'var(--shadow-sm)';
               }}
             >
-              {/* Card Header: Date, Mood & Actions */}
+              {/* Card Header: Date, Mood, Vault & Actions */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
                 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '1.25rem' }}>{emoji}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '1.2rem' }}>{emoji}</span>
                   <span style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-primary)' }}>
                     {formattedDate}
                   </span>
@@ -222,10 +308,26 @@ export default function EntryList({
                     ({entry.time})
                   </span>
 
+                  {/* Vault Badge */}
+                  <span style={{ fontSize: '0.7rem', color: 'var(--accent-primary)', backgroundColor: 'var(--accent-light)', padding: '2px 7px', borderRadius: '4px', fontWeight: 500 }}>
+                    {vaultLabel}
+                  </span>
+
+                  {/* Cursive Indicator */}
+                  {entry.font_style === 'cursive' && (
+                    <span 
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '0.7rem', color: 'var(--text-muted)', backgroundColor: 'var(--bg-elevated)', padding: '2px 6px', borderRadius: '4px' }}
+                      title="कर्सिव हस्तलेख मोड"
+                    >
+                      <Type size={10} />
+                      कर्सिव
+                    </span>
+                  )}
+
                   {/* Physical Diary Indicator */}
                   {entry.physical_mode && (
                     <span 
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '0.7rem', color: 'var(--accent-primary)', backgroundColor: 'var(--accent-light)', padding: '2px 6px', borderRadius: '4px' }}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '0.7rem', color: 'var(--text-muted)', backgroundColor: 'var(--bg-elevated)', padding: '2px 6px', borderRadius: '4px' }}
                       title="फिजिकल डायरी मोड"
                     >
                       <PenTool size={10} />
@@ -238,7 +340,7 @@ export default function EntryList({
                   {/* Star Favorite */}
                   <button
                     onClick={() => onToggleFavorite(entry)}
-                    style={{ background: 'transparent', border: 'none', padding: '4px', color: entry.is_favorite ? '#eab308' : 'var(--text-muted)' }}
+                    style={{ background: 'transparent', border: 'none', padding: '4px', color: entry.is_favorite ? '#eab308' : 'var(--text-muted)', cursor: 'pointer' }}
                   >
                     <Star size={16} fill={entry.is_favorite ? '#eab308' : 'none'} />
                   </button>
@@ -246,11 +348,11 @@ export default function EntryList({
                   {/* Delete Button */}
                   <button
                     onClick={() => {
-                      if (confirm('क्या आप इस डायरी एंट्री को हटाना चाहते हैं?')) {
+                      if (confirm('क्या आप इस डायरी प्रविष्टि को हटाना चाहते हैं?')) {
                         onDeleteEntry(entry.id);
                       }
                     }}
-                    style={{ background: 'transparent', border: 'none', padding: '4px', color: 'var(--text-muted)' }}
+                    style={{ background: 'transparent', border: 'none', padding: '4px', color: 'var(--text-muted)', cursor: 'pointer' }}
                     onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--danger)')}
                     onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
                   >
@@ -261,11 +363,30 @@ export default function EntryList({
               </div>
 
               {/* Title & Preview */}
-              <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '6px' }}>
+              <h3 
+                className={entry.font_style === 'cursive' ? 'font-cursive' : 'font-standard'}
+                style={{ 
+                  fontSize: entry.font_style === 'cursive' ? '1.25rem' : '1.05rem', 
+                  fontWeight: 700, 
+                  color: 'var(--text-primary)', 
+                  marginBottom: '6px' 
+                }}
+              >
                 {entry.title || 'शीर्षक रहित डायरी'}
               </h3>
 
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5, display: '-webkit-box', WebKitLineClamp: 3, WebKitBoxOrient: 'vertical', overflow: 'hidden' }}>
+              <p 
+                className={entry.font_style === 'cursive' ? 'font-cursive' : 'font-standard'}
+                style={{ 
+                  fontSize: entry.font_style === 'cursive' ? '1.05rem' : '0.85rem', 
+                  color: 'var(--text-secondary)', 
+                  lineHeight: entry.font_style === 'cursive' ? 1.7 : 1.5, 
+                  display: '-webkit-box', 
+                  WebKitLineClamp: 3, 
+                  WebKitBoxOrient: 'vertical', 
+                  overflow: 'hidden' 
+                }}
+              >
                 {entry.content || 'कोई मुख्य विवरण नहीं...'}
               </p>
 
@@ -287,16 +408,18 @@ export default function EntryList({
                 {/* Tags */}
                 {entry.tags && entry.tags.length > 0 && (
                   <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                    {entry.tags.slice(0, 3).map((t) => (
-                      <span key={t} style={{ fontSize: '0.7rem', color: 'var(--text-muted)', backgroundColor: 'var(--bg-elevated)', padding: '1px 6px', borderRadius: '8px' }}>
+                    {entry.tags.map((t) => (
+                      <span 
+                        key={t} 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedTag(selectedTag === t ? null : t);
+                        }}
+                        style={{ fontSize: '0.7rem', color: 'var(--text-muted)', backgroundColor: 'var(--bg-elevated)', padding: '1px 6px', borderRadius: '8px', cursor: 'pointer' }}
+                      >
                         {t}
                       </span>
                     ))}
-                    {entry.tags.length > 3 && (
-                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                        +{entry.tags.length - 3}
-                      </span>
-                    )}
                   </div>
                 )}
 

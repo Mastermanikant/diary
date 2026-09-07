@@ -8,15 +8,20 @@ import {
   Moon, 
   ShieldCheck, 
   Smartphone,
-  Plus
+  Plus,
+  Cloud,
+  CloudOff,
+  RefreshCw
 } from 'lucide-react';
 import LockScreen from './components/LockScreen';
 import EntryList from './components/EntryList';
 import DiaryEditor from './components/DiaryEditor';
 import BackupModal from './components/BackupModal';
 import SettingsModal from './components/SettingsModal';
+import SyncModal from './components/SyncModal';
 import { getAllEncryptedEntries, saveEncryptedEntry, deleteEncryptedEntry, getVaultConfig } from './storage/localVault';
 import { decryptPayload, encryptPayload } from './crypto/vaultCrypto';
+import { executeSyncCycle } from './storage/syncEngine';
 
 export default function App() {
   const [theme, setTheme] = useState(() => {
@@ -39,6 +44,7 @@ export default function App() {
   // Modals
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
 
   // Auto-lock inactivity timer ref (10 minutes)
   const inactivityTimerRef = useRef(null);
@@ -70,9 +76,47 @@ export default function App() {
     };
   }, [isUnlocked]);
 
+  // Auto Background Sync Listener (on reconnect / every 60s)
+  useEffect(() => {
+    if (!isUnlocked || !vaultConfig?.cloud_sync_enabled || !masterKey) return;
+
+    const handleOnline = () => {
+      triggerSilentSync(vaultConfig, masterKey);
+    };
+
+    window.addEventListener('online', handleOnline);
+
+    const interval = setInterval(() => {
+      if (navigator.onLine) {
+        triggerSilentSync(vaultConfig, masterKey);
+      }
+    }, 60 * 1000); // Every 60s
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      clearInterval(interval);
+    };
+  }, [isUnlocked, vaultConfig?.cloud_sync_enabled, masterKey]);
+
   // Toggle Theme
   function toggleTheme() {
     setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
+  }
+
+  // Silent Delta Sync Trigger
+  async function triggerSilentSync(cfg = vaultConfig, key = masterKey) {
+    if (!cfg?.cloud_sync_enabled || !key || !navigator.onLine) return;
+    try {
+      const res = await executeSyncCycle({ config: cfg });
+      if (res.success) {
+        setVaultConfig(res.updatedConfig);
+        if (res.pulledCount > 0) {
+          await loadAndDecryptEntries(key, res.updatedConfig);
+        }
+      }
+    } catch (err) {
+      console.warn('Silent sync error:', err);
+    }
   }
 
   // ==========================================
@@ -86,6 +130,11 @@ export default function App() {
 
     // Load and decrypt all entries into memory
     await loadAndDecryptEntries(key, config);
+
+    // Initial background delta sync if enabled
+    if (config?.cloud_sync_enabled && navigator.onLine) {
+      triggerSilentSync(config, key);
+    }
   }
 
   // Load and decrypt entries from IndexedDB
@@ -102,6 +151,8 @@ export default function App() {
             id: rec.id,
             date: rec.date,
             time: rec.time,
+            vault_category: rec.vault_category || payload.vault_category || 'personal',
+            font_style: payload.font_style || 'cursive',
             created_at: rec.created_at,
             updated_at: rec.updated_at,
             device_name: rec.device_name,
@@ -114,11 +165,12 @@ export default function App() {
             struck_items: payload.struck_items || []
           });
         } catch {
-          // If a single record had corrupted ciphertext, preserve preview
           decryptedList.push({
             id: rec.id,
             date: rec.date,
             time: rec.time,
+            vault_category: rec.vault_category || 'personal',
+            font_style: 'standard',
             title: rec.preview_title || 'अमान्य / करप्टेड पन्ना',
             content: '⚠️ यह प्रविष्टि डिक्रिप्ट नहीं हो सकी (संभवतः छेड़छाड़ या करप्शन)।',
             mood: rec.preview_mood || 'sad',
@@ -154,6 +206,10 @@ export default function App() {
         setEntryToEdit(null);
         setCurrentView('list');
       }
+      // If cloud sync on, push deletion delta
+      if (vaultConfig?.cloud_sync_enabled && navigator.onLine) {
+        triggerSilentSync();
+      }
     } catch (err) {
       alert('हटाने में त्रुटि: ' + err.message);
     }
@@ -172,6 +228,8 @@ export default function App() {
         content: entry.content,
         mood: entry.mood,
         tags: entry.tags,
+        vault_category: entry.vault_category || 'personal',
+        font_style: entry.font_style || 'cursive',
         is_favorite: updatedFavorite,
         physical_mode: entry.physical_mode,
         struck_items: entry.struck_items,
@@ -184,15 +242,20 @@ export default function App() {
         id: entry.id,
         date: entry.date,
         time: entry.time,
+        vault_category: entry.vault_category || 'personal',
         created_at: entry.created_at,
         updated_at: Date.now(),
         device_name: entry.device_name,
-        sync_status: 'local_only',
+        sync_status: vaultConfig?.cloud_sync_enabled ? 'pending' : 'local_only',
         encrypted_data: encryptedBlob,
         preview_title: entry.title,
         preview_mood: entry.mood,
         preview_is_favorite: updatedFavorite
       });
+
+      if (vaultConfig?.cloud_sync_enabled && navigator.onLine) {
+        triggerSilentSync();
+      }
     } catch (err) {
       console.error('Favorite update error:', err);
     }
@@ -210,6 +273,8 @@ export default function App() {
           content: item.content || '',
           mood: item.mood || 'happy',
           tags: item.tags || [],
+          vault_category: item.vault_category || 'personal',
+          font_style: item.font_style || 'cursive',
           is_favorite: item.is_favorite || false,
           physical_mode: item.physical_mode ?? true,
           struck_items: item.struck_items || [],
@@ -223,10 +288,11 @@ export default function App() {
           id: entryId,
           date: item.date || new Date().toISOString().split('T')[0],
           time: item.time || '12:00',
+          vault_category: item.vault_category || 'personal',
           created_at: item.created_at || now,
           updated_at: now,
           device_name: item.device_name || vaultConfig?.device_name || 'Imported Device',
-          sync_status: 'local_only',
+          sync_status: vaultConfig?.cloud_sync_enabled ? 'pending' : 'local_only',
           encrypted_data: encryptedBlob,
           preview_title: item.title,
           preview_mood: item.mood,
@@ -236,6 +302,10 @@ export default function App() {
 
       await loadAndDecryptEntries(masterKey, vaultConfig);
       alert('सभी प्रविष्टियां सफलतापूर्वक आयात (Import) और एन्क्रिप्ट कर ली गईं!');
+
+      if (vaultConfig?.cloud_sync_enabled && navigator.onLine) {
+        triggerSilentSync();
+      }
     } catch (err) {
       alert('आयात त्रुटि: ' + err.message);
     }
@@ -258,7 +328,7 @@ export default function App() {
       
       {/* Top Navbar */}
       <header style={{ backgroundColor: 'var(--bg-card)', borderBottom: '1px solid var(--border-color)', padding: '12px 16px', position: 'sticky', top: 0, zIndex: 100 }}>
-        <div style={{ maxWidth: '840px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ maxWidth: '860px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
           
           {/* Brand Logo & Device Name */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -278,30 +348,55 @@ export default function App() {
                 </span>
               </div>
             </div>
-
-            <span style={{ display: 'none', alignItems: 'center', gap: '4px', fontSize: '0.72rem', color: 'var(--text-muted)', backgroundColor: 'var(--bg-elevated)', padding: '3px 8px', borderRadius: '12px' }}>
-              <Smartphone size={12} />
-              {vaultConfig?.device_name || 'My Device'}
-            </span>
           </div>
 
           {/* Action Toolbar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             
+            {/* Cloud Sync Status Button */}
+            <button
+              onClick={() => setIsSyncModalOpen(true)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '6px 11px',
+                fontSize: '0.78rem',
+                borderRadius: '8px',
+                fontWeight: '600',
+                backgroundColor: vaultConfig?.cloud_sync_enabled ? 'var(--success-light)' : 'var(--bg-elevated)',
+                color: vaultConfig?.cloud_sync_enabled ? 'var(--success)' : 'var(--text-muted)',
+                border: `1px solid ${vaultConfig?.cloud_sync_enabled ? 'var(--success)' : 'var(--border-color)'}`,
+                cursor: 'pointer'
+              }}
+              title="क्लाउड सिंक सेटिंग्स खोलें"
+            >
+              {vaultConfig?.cloud_sync_enabled ? (
+                <>
+                  <Cloud size={14} />
+                  <span>सिंक सक्रिय</span>
+                </>
+              ) : (
+                <>
+                  <CloudOff size={14} />
+                  <span>लोकल-ओनली</span>
+                </>
+              )}
+            </button>
+
             {/* Backup / Export / Import Modal Trigger */}
             <button
               onClick={() => setIsBackupModalOpen(true)}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '6px 10px', fontSize: '0.8rem', borderRadius: '8px' }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '6px 10px', fontSize: '0.8rem', borderRadius: '8px', cursor: 'pointer' }}
               title="बैकअप व एक्सपोर्ट"
             >
               <Database size={15} />
-              <span style={{ display: 'none' }}>बैकअप</span>
             </button>
 
             {/* Settings Modal Trigger */}
             <button
               onClick={() => setIsSettingsModalOpen(true)}
-              style={{ padding: '6px 10px', fontSize: '0.8rem', borderRadius: '8px' }}
+              style={{ padding: '6px 10px', fontSize: '0.8rem', borderRadius: '8px', cursor: 'pointer' }}
               title="वॉल्ट सेटिंग्स"
             >
               <Settings size={15} />
@@ -310,7 +405,7 @@ export default function App() {
             {/* Theme Toggle */}
             <button
               onClick={toggleTheme}
-              style={{ padding: '6px 10px', fontSize: '0.8rem', borderRadius: '8px' }}
+              style={{ padding: '6px 10px', fontSize: '0.8rem', borderRadius: '8px', cursor: 'pointer' }}
               title={theme === 'dark' ? 'लाइट मोड' : 'डार्क मोड'}
             >
               {theme === 'dark' ? <Sun size={15} color="var(--warning)" /> : <Moon size={15} color="var(--accent-primary)" />}
@@ -319,7 +414,7 @@ export default function App() {
             {/* Instant Lock Button */}
             <button
               onClick={handleLockVault}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '6px 12px', fontSize: '0.8rem', borderRadius: '8px', color: 'var(--danger)', borderColor: 'var(--border-color)', backgroundColor: 'transparent' }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '6px 12px', fontSize: '0.8rem', borderRadius: '8px', color: 'var(--danger)', borderColor: 'var(--border-color)', backgroundColor: 'transparent', cursor: 'pointer' }}
               title="वॉल्ट लॉक करें (मेमोरी जीरो करें)"
             >
               <Lock size={15} />
@@ -367,6 +462,17 @@ export default function App() {
           />
         )}
       </main>
+
+      {/* Cloud Sync Modal */}
+      <SyncModal
+        isOpen={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+        vaultConfig={vaultConfig}
+        onConfigUpdated={(cfg) => setVaultConfig(cfg)}
+        onSyncFinished={async () => {
+          await loadAndDecryptEntries(masterKey, vaultConfig);
+        }}
+      />
 
       {/* Backup Modal */}
       <BackupModal
